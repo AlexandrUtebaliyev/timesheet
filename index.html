@@ -83,8 +83,9 @@
             <input id="settings-pin" type="password" inputmode="numeric" />
           </div>
           <div class="settings-field">
-            <label>Норма часов</label>
-            <input id="settings-norm" type="text" disabled />
+            <label for="settings-norm">Норма часов</label>
+            <input id="settings-norm" type="number" inputmode="decimal" step="0.5" min="0.5" max="24" placeholder="по умолчанию — из таблицы" />
+            <p class="settings-note">Своя норма действует только на этом телефоне: меняет подсказки, цвета и расчёт переработки в приложении. В саму таблицу и на другие устройства не влияет. Оставьте пустым, чтобы использовать норму из таблицы.</p>
           </div>
           <div class="settings-field">
             <label>Тема</label>

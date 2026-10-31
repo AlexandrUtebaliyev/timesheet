@@ -128,6 +128,15 @@ check("monthGrid: таб.1, 02.11 = 9 (с учётом исправления)",
 const grid2 = grid.find((e) => e.tabNum === 2);
 check("monthGrid: таб.2, 03.11 = \"\" (очищено)", grid2.values["2026-11-03"], "");
 
+// --- настраиваемая норма часов (граница 7.5/8/8.5 сдвигается вместе с нормой) ---
+
+check("цвет 8 при норме 10 (неполный)", model.colorForValue(8, codes, 10), "#BF4F14");
+check("цвет 9.5 при норме 10 (норма)", model.colorForValue(9.5, codes, 10), "#AFD2D3");
+check("цвет 10.5 при норме 10 (переработка)", model.colorForValue(10.5, codes, 10), "#4D94D8");
+check("переработка при норме 10 (10ч -> 0)", model.overtimeForHours(10, 10), 0);
+check("переработка при норме 10 (12ч -> 2)", model.overtimeForHours(12, 10), 2);
+check("итоги месяца таб.4 при норме 10 (переработки нет)", model.monthSummaryForEmployee(journal, 4, 2026, 11, 10).overtime, 0);
+
 // --- конфликты офлайн-очереди ---
 
 const serverEntries = [

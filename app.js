@@ -86,22 +86,26 @@ function applyTheme() {
 // ---------- загрузка данных ----------
 
 async function loadReferenceData() {
+  let serverNormHours = state.normHours;
   try {
     const data = await api.fetchInit();
     state.employees = data.employees;
     state.codes = data.codes;
-    state.normHours = data.normHours;
+    serverNormHours = data.normHours;
     await queue.setCache("ref", data);
   } catch (err) {
     const cached = await queue.getCache("ref");
     if (cached) {
       state.employees = cached.value.employees;
       state.codes = cached.value.codes;
-      state.normHours = cached.value.normHours;
+      serverNormHours = cached.value.normHours;
     } else {
       showToast("Нет сети и нет сохранённых данных");
     }
   }
+  // Норма из таблицы — значение по умолчанию; пользователь может переопределить её
+  // локально в «Настройках» (влияет только на этот телефон, см. DECISIONS.md).
+  state.normHours = config.getNormHoursOverride() || serverNormHours;
 }
 
 function monthKeyOf(date) {
@@ -188,6 +192,7 @@ function renderDayScreen() {
   renderChips(totals);
 
   el("fill-all-eight").classList.toggle("hidden", sunday);
+  el("fill-all-eight").textContent = `Всем ${state.normHours} ч`;
 
   const list = el("day-list");
   list.innerHTML = "";
@@ -210,11 +215,11 @@ function renderDayScreen() {
         badge.textContent = "В";
       } else {
         badge.className = "value-badge value-badge--suggest";
-        badge.textContent = "8";
+        badge.textContent = String(state.normHours);
       }
     } else {
       badge.className = "value-badge";
-      badge.style.background = model.colorForValue(value, state.codes) || "#AFD2D3";
+      badge.style.background = model.colorForValue(value, state.codes, state.normHours) || "#AFD2D3";
       badge.textContent = String(value);
     }
     row.appendChild(badge);
@@ -269,12 +274,12 @@ function renderMonthScreen() {
 
   let rows = "";
   for (const emp of grid) {
-    const summary = model.monthSummaryForEmployee(journal, emp.tabNum, year, month);
+    const summary = model.monthSummaryForEmployee(journal, emp.tabNum, year, month, state.normHours);
     rows += `<tr><td class="name-col" data-tab="${emp.tabNum}">${escapeHtml(emp.name)}</td>`;
     for (let day = fromDay; day <= toDay; day++) {
       const dateKey = model.toDateKey(year, month, day);
       const value = emp.values[dateKey];
-      const color = model.colorForValue(value, state.codes);
+      const color = model.colorForValue(value, state.codes, state.normHours);
       const sunday = model.isSunday(dateKey) ? "sunday" : "";
       const text = model.isEmptyValue(value) ? "" : String(value);
       rows += `<td class="value-cell ${sunday}" data-tab="${emp.tabNum}" data-date="${dateKey}" style="${color ? `background:${color}` : ""}">${escapeHtml(text)}</td>`;
@@ -291,7 +296,7 @@ function renderMonthScreen() {
     cell.addEventListener("click", () => openEmployeeScreen(Number(cell.dataset.tab)));
   });
 
-  const monthTotals = model.monthSummaryTotals(journal, activeEmployees(), year, month);
+  const monthTotals = model.monthSummaryTotals(journal, activeEmployees(), year, month, state.normHours);
   el("month-totals").innerHTML = `
     <span>ИТОГО дней: <strong>${monthTotals.days}</strong></span>
     <span>часов: <strong>${monthTotals.hours}</strong></span>
@@ -311,7 +316,7 @@ function renderEmployeeScreen() {
   const d = state.currentDate;
   const monthKey = monthKeyOf(d);
   const journal = effectiveJournalForMonth(monthKey);
-  const summary = model.monthSummaryForEmployee(journal, tabNum, d.getFullYear(), d.getMonth() + 1);
+  const summary = model.monthSummaryForEmployee(journal, tabNum, d.getFullYear(), d.getMonth() + 1, state.normHours);
 
   el("employee-name").textContent = emp.name;
   el("employee-position").textContent = emp.position;
@@ -332,7 +337,7 @@ function renderEmployeeScreen() {
 function renderSettingsScreen() {
   el("settings-url").value = config.getScriptUrl();
   el("settings-pin").value = config.getPin();
-  el("settings-norm").value = state.normHours ? `${state.normHours} ч` : "—";
+  el("settings-norm").value = state.normHours || "";
 
   document.querySelectorAll("#theme-switch button").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.theme === config.getTheme());
@@ -362,13 +367,15 @@ function openSheet(tabNum, dateKey) {
   const journal = effectiveJournalForMonth(monthKey);
   const currentValue = model.getCellValue(journal, dateKey, tabNum);
 
+  const tiles = [state.normHours, ...HOUR_TILES.filter((h) => h !== state.normHours)];
+
   const overlay = document.createElement("div");
   overlay.className = "sheet-overlay";
   overlay.innerHTML = `
     <div class="sheet">
       <div class="sheet__title">${escapeHtml(emp.name)} · ${dateKey}</div>
       <div class="sheet__grid">
-        ${HOUR_TILES.map((h) => `<button class="sheet__btn" data-hours="${h}">${h}</button>`).join("")}
+        ${tiles.map((h) => `<button class="sheet__btn" data-hours="${h}">${h}</button>`).join("")}
       </div>
       <div class="sheet__other">
         <input type="number" step="0.5" min="0" max="24" placeholder="Другое, ч" id="sheet-other-input" />
@@ -461,7 +468,7 @@ async function fillAllEight() {
   for (const emp of activeEmployees()) {
     const value = model.getCellValue(journal, dateKey, emp.tabNum);
     if (!model.isEmptyValue(value)) continue;
-    const record = api.makeRecord(dateKey, emp.tabNum, 8, undefined);
+    const record = api.makeRecord(dateKey, emp.tabNum, state.normHours, undefined);
     await queue.enqueue(record);
     state.outbox.push(record);
   }
@@ -634,6 +641,17 @@ function wireStaticEvents() {
   el("settings-save").addEventListener("click", () => {
     config.setScriptUrl(el("settings-url").value.trim());
     config.setPin(el("settings-pin").value.trim());
+    const normInput = el("settings-norm").value.trim();
+    if (normInput === "") {
+      config.setNormHoursOverride(null); // пусто — вернуться к значению из таблицы
+    } else {
+      const n = Number(normInput);
+      if (!Number.isFinite(n) || n <= 0 || n > 24) {
+        showToast("Норма часов: число от 0 до 24");
+        return;
+      }
+      config.setNormHoursOverride(n);
+    }
     showToast("Настройки сохранены");
     location.reload();
   });

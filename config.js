@@ -5,6 +5,7 @@ const KEYS = {
   pin: "timesheet.pin",
   theme: "timesheet.theme", // "auto" | "light" | "dark"
   deviceId: "timesheet.deviceId",
+  normHoursOverride: "timesheet.normHoursOverride",
 };
 
 export function getScriptUrl() {
@@ -29,6 +30,24 @@ export function getTheme() {
 
 export function setTheme(theme) {
   localStorage.setItem(KEYS.theme, theme);
+}
+
+// Норма часов приходит с сервера (action=init), но пользователь может переопределить
+// её локально в «Настройках» — это влияет только на подсказки/цвета/переработку в
+// приложении на этом устройстве, саму Google-таблицу не меняет (см. DECISIONS.md).
+export function getNormHoursOverride() {
+  const raw = localStorage.getItem(KEYS.normHoursOverride);
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+export function setNormHoursOverride(value) {
+  if (value === null || value === "" || !Number.isFinite(Number(value)) || Number(value) <= 0) {
+    localStorage.removeItem(KEYS.normHoursOverride);
+  } else {
+    localStorage.setItem(KEYS.normHoursOverride, String(Number(value)));
+  }
 }
 
 export function getDeviceId() {

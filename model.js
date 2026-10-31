@@ -94,18 +94,20 @@ export function isCodeValue(value) {
 
 // ---------- переработка и цвет ----------
 
-export function overtimeForHours(hours) {
+export function overtimeForHours(hours, normHours = NORM_HOURS) {
   if (!isNumericValue(hours)) return 0;
-  return hours > NORM_HOURS ? hours - NORM_HOURS : 0;
+  return hours > normHours ? hours - normHours : 0;
 }
 
-// Границы: (0;7.5) неполный день, [7.5;8] норма, [8.5;24] переработка.
-// См. DECISIONS.md — между 8 и 8.5 значений не бывает (шаг 0.5).
-export function colorForValue(value, codes = []) {
+// Границы при norm=8: (0;7.5) неполный день, [7.5;8] норма, [8.5;24] переработка —
+// т.е. пол-отступа от нормы в обе стороны (шаг значений 0.5, см. DECISIONS.md).
+// normHours настраивается в «Настройках» (локально, на устройстве) — это не меняет
+// норму и цвета в самой Google-таблице, см. DECISIONS.md.
+export function colorForValue(value, codes = [], normHours = NORM_HOURS) {
   if (isEmptyValue(value)) return null;
   if (isNumericValue(value)) {
-    if (value >= 8.5) return "#4D94D8";
-    if (value >= 7.5) return "#AFD2D3";
+    if (value >= normHours + 0.5) return "#4D94D8";
+    if (value >= normHours - 0.5) return "#AFD2D3";
     if (value > 0) return "#BF4F14";
     return null;
   }
@@ -145,7 +147,7 @@ export function dayTotals(journal, employees, dateKey) {
 
 // ---------- итоги за месяц по сотруднику ----------
 
-export function monthSummaryForEmployee(journal, tabNum, year, month) {
+export function monthSummaryForEmployee(journal, tabNum, year, month, normHours = NORM_HOURS) {
   const map = buildLatestMap(journal);
   const dateKeys = monthDateKeys(year, month);
   let days = 0;
@@ -159,7 +161,7 @@ export function monthSummaryForEmployee(journal, tabNum, year, month) {
     if (isNumericValue(value)) {
       days++;
       hours += value;
-      overtime += overtimeForHours(value);
+      overtime += overtimeForHours(value, normHours);
     } else if (isCodeValue(value)) {
       byCode[value] = (byCode[value] || 0) + 1;
     }
@@ -169,12 +171,12 @@ export function monthSummaryForEmployee(journal, tabNum, year, month) {
 }
 
 // Итоги месяца по всем активным сотрудникам (для «ИТОГО» на экране «Месяц»).
-export function monthSummaryTotals(journal, employees, year, month) {
+export function monthSummaryTotals(journal, employees, year, month, normHours = NORM_HOURS) {
   let days = 0;
   let hours = 0;
   let overtime = 0;
   for (const emp of employees) {
-    const s = monthSummaryForEmployee(journal, emp.tabNum, year, month);
+    const s = monthSummaryForEmployee(journal, emp.tabNum, year, month, normHours);
     days += s.days;
     hours += s.hours;
     overtime += s.overtime;
