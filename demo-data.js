@@ -14,18 +14,18 @@ export const DEMO_CODES = [
 ];
 
 export const DEMO_EMPLOYEES = [
-  { tabNum: 1, name: "Иванов Иван Иванович", position: "токарь", active: true },
-  { tabNum: 2, name: "Петров Пётр Петрович", position: "фрезеровщик", active: true },
-  { tabNum: 3, name: "Сидоров Сидор Сидорович", position: "слесарь", active: true },
-  { tabNum: 4, name: "Кузнецов Кузьма Кузьмич", position: "сварщик", active: true },
-  { tabNum: 5, name: "Соколов Семён Матвеевич", position: "токарь", active: true },
-  { tabNum: 6, name: "Попов Павел Романович", position: "слесарь", active: true },
-  { tabNum: 7, name: "Лебедев Лев Егорович", position: "наладчик", active: true },
-  { tabNum: 8, name: "Новиков Никита Фёдорович", position: "сварщик", active: true },
-  { tabNum: 9, name: "Морозов Марк Данилович", position: "фрезеровщик", active: true },
-  { tabNum: 10, name: "Волков Владимир Ильич", position: "слесарь", active: true },
-  { tabNum: 11, name: "Зайцев Захар Андреевич", position: "токарь", active: true },
-  { tabNum: 12, name: "Уволенный Устин Юрьевич", position: "слесарь", active: false },
+  { tabNum: 1, name: "Иванов Иван Иванович", position: "токарь", active: true, paySystem: "оклад" },
+  { tabNum: 2, name: "Петров Пётр Петрович", position: "фрезеровщик", active: true, paySystem: "сдельная" },
+  { tabNum: 3, name: "Сидоров Сидор Сидорович", position: "слесарь", active: true, paySystem: "сдельная" },
+  { tabNum: 4, name: "Кузнецов Кузьма Кузьмич", position: "сварщик", active: true, paySystem: "сдельная" },
+  { tabNum: 5, name: "Соколов Семён Матвеевич", position: "токарь", active: true, paySystem: "оклад" },
+  { tabNum: 6, name: "Попов Павел Романович", position: "слесарь", active: true, paySystem: "сдельная" },
+  { tabNum: 7, name: "Лебедев Лев Егорович", position: "наладчик", active: true, paySystem: "оклад" },
+  { tabNum: 8, name: "Новиков Никита Фёдорович", position: "сварщик", active: true, paySystem: "сдельная" },
+  { tabNum: 9, name: "Морозов Марк Данилович", position: "фрезеровщик", active: true, paySystem: "сдельная" },
+  { tabNum: 10, name: "Волков Владимир Ильич", position: "слесарь", active: true, paySystem: "" },
+  { tabNum: 11, name: "Зайцев Захар Андреевич", position: "токарь", active: true, paySystem: "оклад" },
+  { tabNum: 12, name: "Уволенный Устин Юрьевич", position: "слесарь", active: false, paySystem: "оклад" },
 ];
 
 export const DEMO_NORM_HOURS = 8;

@@ -128,6 +128,29 @@ check("monthGrid: таб.1, 02.11 = 9 (с учётом исправления)",
 const grid2 = grid.find((e) => e.tabNum === 2);
 check("monthGrid: таб.2, 03.11 = \"\" (очищено)", grid2.values["2026-11-03"], "");
 
+// --- фильтр по системе оплаты труда ---
+
+check(
+  "filterByPaySystem('') -> все без изменений",
+  model.filterByPaySystem(activeEmployees, "").map((e) => e.tabNum),
+  [1, 2, 3, 4]
+);
+check(
+  "filterByPaySystem('оклад') -> только таб.1",
+  model.filterByPaySystem(activeEmployees, "оклад").map((e) => e.tabNum),
+  [1]
+);
+check(
+  "filterByPaySystem('сдельная') -> таб.2 и 3",
+  model.filterByPaySystem(activeEmployees, "сдельная").map((e) => e.tabNum),
+  [2, 3]
+);
+check(
+  "filterByPaySystem: пустая paySystem у сотрудника не попадает ни в один конкретный фильтр",
+  model.filterByPaySystem(activeEmployees, "оклад").some((e) => e.tabNum === 4),
+  false
+);
+
 // --- настраиваемая норма часов (граница 7.5/8/8.5 сдвигается вместе с нормой) ---
 
 check("цвет 8 при норме 10 (неполный)", model.colorForValue(8, codes, 10), "#BF4F14");

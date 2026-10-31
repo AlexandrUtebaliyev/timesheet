@@ -17,6 +17,7 @@ const state = {
   currentDate: new Date(),
   screen: "day",
   monthHalf: 1,
+  paySystemFilter: "", // "" | "оклад" | "сдельная"
   selectedEmployeeTab: null,
   sheetTarget: null, // {tabNum, dateKey}
   loadError: null, // текст реальной причины, если не удалось получить справочники
@@ -152,7 +153,8 @@ function effectiveJournalForMonth(monthKey) {
 }
 
 function activeEmployees() {
-  return state.employees.filter((e) => e.active);
+  const active = state.employees.filter((e) => e.active);
+  return model.filterByPaySystem(active, state.paySystemFilter);
 }
 
 // ---------- рендер ----------
@@ -166,6 +168,7 @@ function renderAll() {
   if (state.screen === "settings") renderSettingsScreen();
   renderSaveBar();
   el("day-chips").classList.toggle("hidden", state.screen !== "day");
+  el("pay-filter").classList.toggle("hidden", state.screen !== "day" && state.screen !== "month");
 }
 
 const WEEKDAY_NAMES = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
@@ -231,7 +234,7 @@ function renderDayScreen() {
       <span class="person-row__num">${emp.tabNum}</span>
       <span class="person-row__info">
         <span class="person-row__name">${escapeHtml(emp.name)}</span>
-        <span class="person-row__position">${escapeHtml(emp.position)}</span>
+        <span class="person-row__position">${escapeHtml(emp.position)}${emp.paySystem ? " · " + escapeHtml(emp.paySystem) : ""}</span>
       </span>
     `;
     const badge = document.createElement("span");
@@ -285,7 +288,7 @@ function renderMonthScreen() {
   const month = d.getMonth() + 1;
   const monthKey = monthKeyOf(d);
   const journal = effectiveJournalForMonth(monthKey);
-  const grid = model.monthGrid(journal, state.employees, year, month);
+  const grid = model.monthGrid(journal, activeEmployees(), year, month);
   const totalDays = model.daysInMonth(year, month);
   const half = state.monthHalf;
   const fromDay = half === 1 ? 1 : 16;
@@ -346,7 +349,7 @@ function renderEmployeeScreen() {
   const summary = model.monthSummaryForEmployee(journal, tabNum, d.getFullYear(), d.getMonth() + 1, state.normHours);
 
   el("employee-name").textContent = emp.name;
-  el("employee-position").textContent = emp.position;
+  el("employee-position").textContent = emp.paySystem ? `${emp.position} · ${emp.paySystem}` : emp.position;
   el("employee-days").textContent = summary.days;
   el("employee-hours").textContent = summary.hours;
   el("employee-overtime").textContent = summary.overtime;
@@ -662,6 +665,15 @@ function wireStaticEvents() {
     document.querySelectorAll(".month-toggle button").forEach((b) => b.classList.remove("active"));
     el("month-half-2").classList.add("active");
     renderMonthScreen();
+  });
+
+  document.querySelectorAll("#pay-filter button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.paySystemFilter = btn.dataset.pay;
+      document.querySelectorAll("#pay-filter button").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      renderAll();
+    });
   });
 
   document.querySelectorAll("#theme-switch button").forEach((btn) => {

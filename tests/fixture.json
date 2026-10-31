@@ -1,10 +1,10 @@
 {
   "employees": [
-    { "tabNum": 1, "name": "Иванов И.И.", "position": "токарь", "active": true },
-    { "tabNum": 2, "name": "Петров П.П.", "position": "фрезеровщик", "active": true },
-    { "tabNum": 3, "name": "Сидоров С.С.", "position": "слесарь", "active": true },
-    { "tabNum": 4, "name": "Кузнецов К.К.", "position": "сварщик", "active": true },
-    { "tabNum": 5, "name": "Уволенный У.У.", "position": "слесарь", "active": false }
+    { "tabNum": 1, "name": "Иванов И.И.", "position": "токарь", "active": true, "paySystem": "оклад" },
+    { "tabNum": 2, "name": "Петров П.П.", "position": "фрезеровщик", "active": true, "paySystem": "сдельная" },
+    { "tabNum": 3, "name": "Сидоров С.С.", "position": "слесарь", "active": true, "paySystem": "сдельная" },
+    { "tabNum": 4, "name": "Кузнецов К.К.", "position": "сварщик", "active": true, "paySystem": "" },
+    { "tabNum": 5, "name": "Уволенный У.У.", "position": "слесарь", "active": false, "paySystem": "оклад" }
   ],
   "codes": [
     { "code": "В", "label": "Выходной", "color": "#B3E5A1", "paid": null },

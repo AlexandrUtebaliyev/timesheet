@@ -75,7 +75,7 @@ function ensureEmployeesSheet(ss, log) {
     return false;
   }
   var sheet = ss.insertSheet(SHEET_EMPLOYEES);
-  sheet.getRange(1, 1, 1, 4).setValues([["Таб. №", "ФИО", "Должность", "Активен"]]);
+  sheet.getRange(1, 1, 1, 5).setValues([["Таб. №", "ФИО", "Должность", "Активен", "Система оплаты"]]);
   sheet.setFrozenRows(1);
 
   var source = ss.getSheetByName(SHEET_ARCHIVE_SOURCE);
@@ -86,13 +86,20 @@ function ensureEmployeesSheet(ss, log) {
       var name = data[i][1];
       var position = data[i][2];
       if (!name) continue;
-      rows.push([i + 1, name, position, "да"]);
+      rows.push([i + 1, name, position, "да", ""]); // систему оплаты назначает пользователь вручную
     }
   }
   if (rows.length) {
-    sheet.getRange(2, 1, rows.length, 4).setValues(rows);
+    sheet.getRange(2, 1, rows.length, 5).setValues(rows);
   }
-  sheet.autoResizeColumns(1, 4);
+  // Выпадающий список в "Система оплаты" — чтобы не разъезжались варианты написания
+  // ("Оклад" vs "оклад"), от которых зависит фильтр в приложении.
+  var paySystemRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(["оклад", "сдельная"], true)
+    .setAllowInvalid(true)
+    .build();
+  sheet.getRange(2, 5, 999, 1).setDataValidation(paySystemRule);
+  sheet.autoResizeColumns(1, 5);
   log.push('Лист "' + SHEET_EMPLOYEES + '" создан, заполнено сотрудников: ' + rows.length + ".");
   return true;
 }
@@ -399,14 +406,17 @@ function archiveCurrentMonth() {
 
 function readEmployees(onlyActive) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_EMPLOYEES);
-  var rows = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 0), 4).getValues();
+  var rows = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 0), 5).getValues();
   var result = [];
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
     if (!r[0]) continue;
     var active = String(r[3]).trim().toLowerCase() === "да";
     if (onlyActive && !active) continue;
-    result.push({ tabNum: r[0], name: r[1], position: r[2], active: active });
+    // Систему оплаты назначает пользователь сам в таблице; пусто — пока не назначена
+    // (в приложении такой сотрудник просто не попадает ни под один конкретный фильтр).
+    var paySystem = r[4] ? String(r[4]).trim().toLowerCase() : "";
+    result.push({ tabNum: r[0], name: r[1], position: r[2], active: active, paySystem: paySystem });
   }
   return result;
 }

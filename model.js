@@ -1,6 +1,6 @@
 // model.js — чистые функции над данными табеля. Без DOM, без сети, без побочных эффектов.
 // Журнал: запись {date: "YYYY-MM-DD", tabNum: number, value: number|string|"", who, ts, device, uuid}
-// Сотрудник: {tabNum, name, position, active: boolean}
+// Сотрудник: {tabNum, name, position, active: boolean, paySystem: "оклад"|"сдельная"|""}
 // Код: {code, label, color, paid: boolean}
 
 const NORM_HOURS = 8;
@@ -90,6 +90,15 @@ export function isEmptyValue(value) {
 
 export function isCodeValue(value) {
   return typeof value === "string" && value !== "";
+}
+
+// ---------- сотрудники ----------
+
+// paySystem — "оклад" | "сдельная" | "" (пусто = не назначена, не фильтруется).
+// Пустая/falsy фильтр-строка означает «все системы оплаты» — возвращает employees как есть.
+export function filterByPaySystem(employees, paySystem) {
+  if (!paySystem) return employees;
+  return employees.filter((e) => e.paySystem === paySystem);
 }
 
 // ---------- переработка и цвет ----------
