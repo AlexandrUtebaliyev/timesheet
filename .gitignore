@@ -3,6 +3,7 @@ CLAUDE.md
 DECISIONS.md
 PROGRESS.md
 start.cmd
+continue.cmd
 claude-settings.json
 .claude/
 node_modules/

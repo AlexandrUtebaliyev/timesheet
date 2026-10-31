@@ -160,7 +160,9 @@ function rebuildTabelSheet() {
  */
 function buildTabelSheet(sheet) {
   sheet.getRange("A3").setValue('ТОО "ПК Алтын Таға"');
+  sheet.getRange("A4").setValue("(наименование организации)");
   sheet.getRange("A5").setValue("Цех металообработки");
+  sheet.getRange("A6").setValue("(структурное подразделение)");
   sheet.getRange("P10").setValue("ТАБЕЛЬ УЧЕТА РАБОЧЕГО ВРЕМЕНИ И РАСЧЕТА ЗАРАБОТНОЙ ПЛАТЫ");
 
   // AN11 — первое число месяца; источник правды для всей сетки. Прячем его, т.к. это
@@ -186,15 +188,20 @@ function buildTabelSheet(sheet) {
     '="За "&SWITCH(MONTH($AN$11),1,"январь",2,"февраль",3,"март",4,"апрель",5,"май",6,"июнь",7,"июль",8,"август",9,"сентябрь",10,"октябрь",11,"ноябрь",12,"декабрь")&" "&YEAR($AN$11)&" года"'
   );
 
-  sheet.getRange("AI3").setValue("Утверждаю:");
-  sheet.getRange("AI4").setValue("Директор");
-  sheet.getRange("AI5").setValue("Нұрмағамбет Ә. Е.");
+  sheet.getRange("AI3").setValue("Утверждаю");
+  sheet.getRange("AI4").setValue('Директор ТОО "ПК Алтын Таға"');
+  sheet.getRange("AI5").setValue("______________Нұрмағамбет Ә. Е.");
 
+  // Шапка итогов — три вложенные строки, как в "Архив_исходный":
+  // 13: общий заголовок; 14: "дней"/"часов"; 15: "часов"/"из них"; 16: разбивка.
   sheet.getRange("AI13").setValue("Итого отработано за месяц");
-  sheet.getRange("AJ13").setValue("часов");
-  sheet.getRange("AK13").setValue("ремонтных");
-  sheet.getRange("AL13").setValue("переработка");
-  sheet.getRange("AM13").setValue("зарплата");
+  sheet.getRange("AI14").setValue("дней");
+  sheet.getRange("AJ14").setValue("часов");
+  sheet.getRange("AJ15").setValue("часов");
+  sheet.getRange("AK15").setValue("из них");
+  sheet.getRange("AK16").setValue("ремонтных");
+  sheet.getRange("AL16").setValue("переработка");
+  sheet.getRange("AM16").setValue("зарплата");
 
   // Строка 14 — числа дней месяца; строка 13 — пометка выходных.
   for (var col = 4; col <= 34; col++) { // D..AH
@@ -206,11 +213,20 @@ function buildTabelSheet(sheet) {
     sheet.getRange(colLetter + "13").setFormula('=IF(' + colLetter + '14="","",IF(WEEKDAY(' + colLetter + '14)=1,"В",""))');
   }
 
-  // Сотрудники: A18 — спиллящийся список активных табельных номеров, B/C — ВПР.
-  sheet.getRange("A18").setFormula(
+  // Сотрудники: количество активных строк из "Сотрудники" определяет размер сетки —
+  // если сотрудников больше 12 (или меньше), таблица подстраивается, а не ломается
+  // (раньше FILTER на фиксированную сетку 18:29 падал в #REF!, если активных
+  // сотрудников становилось больше 12 и спилл "наезжал" на строку ИТОГО).
+  var firstEmployeeRow = 18;
+  var employeeCount = Math.max(readEmployees(true).length, 1);
+  var lastEmployeeRow = firstEmployeeRow + employeeCount - 1;
+  var totalRow = lastEmployeeRow + 1;
+
+  // A18 — спиллящийся список активных табельных номеров, B/C — ВПР.
+  sheet.getRange("A" + firstEmployeeRow).setFormula(
     '=IFERROR(FILTER(' + SHEET_EMPLOYEES + '!$A$2:$A$1000,' + SHEET_EMPLOYEES + '!$D$2:$D$1000="да"),"")'
   );
-  for (var row = 18; row <= 29; row++) {
+  for (var row = firstEmployeeRow; row <= lastEmployeeRow; row++) {
     sheet.getRange("B" + row).setFormula('=IFERROR(VLOOKUP(A' + row + ',' + SHEET_EMPLOYEES + '!$A:$C,2,FALSE),"")');
     sheet.getRange("C" + row).setFormula('=IFERROR(VLOOKUP(A' + row + ',' + SHEET_EMPLOYEES + '!$A:$C,3,FALSE),"")');
 
@@ -230,42 +246,84 @@ function buildTabelSheet(sheet) {
     );
   }
 
-  sheet.getRange("A30").setValue("ИТОГО");
-  sheet.getRange("AI30").setFormula("=SUM(AI18:AI29)");
-  sheet.getRange("AJ30").setFormula("=SUM(AJ18:AJ29)");
-  sheet.getRange("AL30").setFormula("=SUM(AL18:AL29)");
+  sheet.getRange("A" + totalRow).setValue("ИТОГО");
+  sheet.getRange("AI" + totalRow).setFormula("=SUM(AI" + firstEmployeeRow + ":AI" + lastEmployeeRow + ")");
+  sheet.getRange("AJ" + totalRow).setFormula("=SUM(AJ" + firstEmployeeRow + ":AJ" + lastEmployeeRow + ")");
+  sheet.getRange("AL" + totalRow).setFormula("=SUM(AL" + firstEmployeeRow + ":AL" + lastEmployeeRow + ")");
 
-  sheet.getRange("B33").setValue("Нач. цеха");
-  sheet.getRange("C33").setValue("Утебалиев А.В.");
-  sheet.getRange("B36").setValue("Гл. инженер");
-  sheet.getRange("C36").setValue("Минбаев К.К.");
+  sheet.getRange("B" + (totalRow + 3)).setValue("Нач. цеха");
+  sheet.getRange("C" + (totalRow + 3)).setValue("Утебалиев А.В.");
+  sheet.getRange("B" + (totalRow + 6)).setValue("Гл. инженер");
+  sheet.getRange("C" + (totalRow + 6)).setValue("Минбаев К.К.");
 
-  applyTabelConditionalFormatting(sheet);
+  applyTabelConditionalFormatting(sheet, firstEmployeeRow, lastEmployeeRow);
+  copyArchiveFormatting(sheet, firstEmployeeRow, lastEmployeeRow, totalRow);
 
-  // Лист целиком со скрытыми линиями сетки (hideGridlines) — без явных границ таблица
-  // выглядит совсем без линий. Обводим шапку с номерами дней, саму сетку отметок и
-  // строку ИТОГО: A13:AM30 (включает A..C ФИО/должность, D..AH дни, AI..AM итоги).
-  var tableRange = sheet.getRange("A13:AM30");
-  tableRange.setBorder(true, true, true, true, true, true, "#999999", SpreadsheetApp.BorderStyle.SOLID);
+  // Скрываем строку 12 (технический разделитель в "Архив_исходный") и столбец
+  // с технической датой AN — после копирования формата из архива, т.к. оно не
+  // трогает видимость строк/столбцов, но порядок на всякий случай фиксируем явно.
+  sheet.hideRows(12, 1);
+  sheet.hideColumns(40, 1);
 
-  // Ширины столбцов и выравнивание — компактная сетка 31 дня + читаемые ФИО/итоги.
-  sheet.setColumnWidth(1, 40); // A — №
-  sheet.setColumnWidth(2, 230); // B — ФИО
-  sheet.setColumnWidth(3, 130); // C — Должность
-  sheet.setColumnWidths(4, 31, 30); // D..AH — дни
-  sheet.setColumnWidths(35, 5, 65); // AI..AM — итоги
-  sheet.getRange("D13:AH29").setHorizontalAlignment("center");
-  sheet.getRange("D14:AH14").setFontWeight("bold");
-  sheet.getRange("A30:AM30").setFontWeight("bold");
-  sheet.getRange("A18:A29").setHorizontalAlignment("center");
-
-  var dataRange = sheet.getRange(18, 4, 12, 31); // D18:AH29
+  // Повторный запуск "Пересоздать форму" не должен копить защиты поверх друг друга.
+  var existingProtections = sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE);
+  for (var p = 0; p < existingProtections.length; p++) {
+    existingProtections[p].remove();
+  }
+  var dataRange = sheet.getRange(firstEmployeeRow, 4, employeeCount, 31); // D..AH на сотрудников
   var protection = dataRange.protect().setDescription("Табель — печатная форма, собирается формулами из Журнала");
   protection.setWarningOnly(true);
 }
 
-function applyTabelConditionalFormatting(sheet) {
-  var range = sheet.getRange("D18:AH29");
+/**
+ * Копирует реальное форматирование (ширины столбцов, высоты строк, шрифты,
+ * границы, выравнивание) из листа "Архив_исходный" — вместо того чтобы
+ * подбирать значения на глаз.Шапка (строки 1-17) копируется как есть;
+ * строка сотрудника из архива используется как шаблон и тиражируется на
+ * текущее количество сотрудников; строка ИТОГО и подписи ниже неё копируются
+ * со сдвигом на разницу в номере строки ИТОГО между архивом и текущим листом.
+ */
+function copyArchiveFormatting(sheet, firstEmployeeRow, lastEmployeeRow, totalRow) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var archive = ss.getSheetByName(SHEET_ARCHIVE_SOURCE);
+  if (!archive) return;
+
+  var lastCol = 39; // A..AM — печатная форма; технический AN (40) не трогаем
+  var archiveFirstEmployeeRow = 18;
+  var archiveTotalRow = 30;
+  var archiveLastRow = 37; // захватывает строку ИТОГО и подписи B33/B36 с запасом
+
+  for (var c = 1; c <= lastCol; c++) {
+    sheet.setColumnWidth(c, archive.getColumnWidth(c));
+  }
+  for (var r = 1; r < archiveFirstEmployeeRow; r++) {
+    sheet.setRowHeight(r, archive.getRowHeight(r));
+  }
+
+  archive
+    .getRange(1, 1, archiveFirstEmployeeRow - 1, lastCol)
+    .copyTo(sheet.getRange(1, 1, archiveFirstEmployeeRow - 1, lastCol), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+
+  var employeeCount = lastEmployeeRow - firstEmployeeRow + 1;
+  var employeeRowHeight = archive.getRowHeight(archiveFirstEmployeeRow);
+  archive
+    .getRange(archiveFirstEmployeeRow, 1, 1, lastCol)
+    .copyTo(sheet.getRange(firstEmployeeRow, 1, employeeCount, lastCol), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  for (var er = firstEmployeeRow; er <= lastEmployeeRow; er++) {
+    sheet.setRowHeight(er, employeeRowHeight);
+  }
+
+  var tailRows = archiveLastRow - archiveTotalRow + 1;
+  archive
+    .getRange(archiveTotalRow, 1, tailRows, lastCol)
+    .copyTo(sheet.getRange(totalRow, 1, tailRows, lastCol), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  for (var tr = 0; tr < tailRows; tr++) {
+    sheet.setRowHeight(totalRow + tr, archive.getRowHeight(archiveTotalRow + tr));
+  }
+}
+
+function applyTabelConditionalFormatting(sheet, firstEmployeeRow, lastEmployeeRow) {
+  var range = sheet.getRange("D" + firstEmployeeRow + ":AH" + lastEmployeeRow);
   var rules = [
     SpreadsheetApp.newConditionalFormatRule()
       .whenFormulaSatisfied('=AND(ISNUMBER(D18),D18>0,D18<=7.5)')
@@ -329,10 +387,12 @@ function archiveCurrentMonth() {
   copy.setName(name);
   var values = copy.getDataRange().getValues();
   copy.getDataRange().setValues(values); // заменяем формулы статическими значениями
-  var protection = copy.getRange(18, 4, 12, 31).protect();
+  var employeeCount = Math.max(readEmployees(true).length, 1);
+  var protection = copy.getRange(18, 4, employeeCount, 31).protect();
   protection.setWarningOnly(true);
+  copy.hideSheet(); // архив месяца не должен мешаться в списке вкладок
 
-  SpreadsheetApp.getUi().alert('Месяц сохранён в лист "' + name + '".');
+  SpreadsheetApp.getUi().alert('Месяц сохранён в скрытый лист "' + name + '". Открыть его можно через "Вид → Скрытые листы".');
 }
 
 // ===================== чтение справочников =====================
