@@ -436,13 +436,18 @@ function readCodes() {
 // ===================== веб-API =====================
 
 // "master" — полный доступ (чтение + запись через doPost), PIN в Script Properties.
-// "viewer" — только чтение (doGet), отдельный VIEW_PIN в Script Properties; необязателен —
-// если не задан, режима вьюера просто нет. null — PIN не подошёл ни под одну роль.
+// "timekeeper" (табельщик) — чтение + запись, но processRecord() разрешает писать только
+// сотрудникам с paySystem="сдельная"; отдельный TIMEKEEPER_PIN, необязателен.
+// "viewer" — только чтение (doGet), отдельный VIEW_PIN; необязателен.
+// Все дополнительные PIN необязательны — если не заданы в Script Properties, роли просто нет.
+// null — PIN не подошёл ни под одну роль.
 function resolveRole(pin) {
   var props = PropertiesService.getScriptProperties();
   var masterPin = props.getProperty("PIN");
+  var timekeeperPin = props.getProperty("TIMEKEEPER_PIN");
   var viewPin = props.getProperty("VIEW_PIN");
   if (masterPin && String(pin) === String(masterPin)) return "master";
+  if (timekeeperPin && String(pin) === String(timekeeperPin)) return "timekeeper";
   if (viewPin && String(pin) === String(viewPin)) return "viewer";
   return null;
 }
@@ -538,14 +543,16 @@ function doPost(e) {
     if (!role) {
       return jsonResponse({ ok: false, error: "Доступ запрещён" });
     }
-    if (role !== "master") {
+    if (role === "viewer") {
       return jsonResponse({ ok: false, error: "Доступ только для чтения" });
     }
 
     var lock = LockService.getScriptLock();
     lock.waitLock(30000);
     try {
-      var results = records.map(processRecord);
+      var results = records.map(function (rec) {
+        return processRecord(rec, role);
+      });
     } finally {
       lock.releaseLock();
     }
@@ -556,7 +563,7 @@ function doPost(e) {
   }
 }
 
-function processRecord(rec) {
+function processRecord(rec, role) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_JOURNAL);
 
   if (!rec.uuid) {
@@ -572,6 +579,10 @@ function processRecord(rec) {
   })[0];
   if (!employee) {
     return { uuid: rec.uuid, ok: false, error: "Таб. № не найден" };
+  }
+  // Табельщик пишет только сдельщикам — граница реальная (сервер), а не только в интерфейсе.
+  if (role === "timekeeper" && employee.paySystem !== "сдельная") {
+    return { uuid: rec.uuid, ok: false, error: "Табельщик может отмечать только сдельщиков" };
   }
 
   var value = rec.value;

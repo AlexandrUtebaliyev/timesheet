@@ -12,7 +12,7 @@ const state = {
   employees: [],
   codes: [],
   normHours: 8,
-  role: "master", // "master" (запись) | "viewer" (только чтение) — приходит от сервера по PIN
+  role: "master", // "master" (запись) | "timekeeper" (запись только сдельщикам) | "viewer" (только чтение)
   monthCache: new Map(), // "YYYY-MM" -> {entries, loadedAt, offline}
   outbox: [],
   currentDate: new Date(),
@@ -38,6 +38,10 @@ function isCurrentModeRecord(record) {
 
 function isViewer() {
   return state.role === "viewer";
+}
+
+function isTimekeeper() {
+  return state.role === "timekeeper";
 }
 
 // ---------- запуск ----------
@@ -128,6 +132,11 @@ async function loadReferenceData() {
   // Норма из таблицы — значение по умолчанию; пользователь может переопределить её
   // локально в «Настройках» (влияет только на этот телефон, см. DECISIONS.md).
   state.normHours = config.getNormHoursOverride() || serverNormHours;
+
+  // Табельщик ведёт только сдельщиков — фильтр зафиксирован, переключатель не показывается
+  // (activeEmployees() — единая точка, через неё фильтр действует везде: список, сетка
+  // месяца, «Сдельщикам N ч», итоги).
+  if (isTimekeeper()) state.paySystemFilter = "сдельная";
 }
 
 function monthKeyOf(date) {
@@ -179,8 +188,23 @@ function renderAll() {
   if (state.screen === "settings") renderSettingsScreen();
   renderSaveBar();
   el("day-chips").classList.toggle("hidden", state.screen !== "day");
-  el("pay-filter").classList.toggle("hidden", state.screen !== "day" && state.screen !== "month");
-  el("viewer-banner").classList.toggle("hidden", !isViewer());
+  // У табельщика фильтр зафиксирован на «сдельная» — показывать нечего, переключать нельзя.
+  const onFilterableScreen = state.screen === "day" || state.screen === "month";
+  el("pay-filter").classList.toggle("hidden", !onFilterableScreen || isTimekeeper());
+  renderRoleBanner();
+}
+
+function renderRoleBanner() {
+  const banner = el("role-banner");
+  if (isViewer()) {
+    banner.textContent = "Режим только для чтения — ввод отключён";
+    banner.classList.remove("hidden");
+  } else if (isTimekeeper()) {
+    banner.textContent = "Табельщик — доступны только сдельщики";
+    banner.classList.remove("hidden");
+  } else {
+    banner.classList.add("hidden");
+  }
 }
 
 const WEEKDAY_NAMES = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
@@ -395,7 +419,8 @@ function renderSettingsScreen() {
     btn.classList.toggle("active", btn.dataset.theme === config.getTheme());
   });
 
-  el("settings-role-note").textContent = `Режим доступа: ${isViewer() ? "только просмотр" : "мастер (запись)"}`;
+  const roleLabel = isViewer() ? "только просмотр" : isTimekeeper() ? "табельщик (запись: только сдельщики)" : "мастер (запись)";
+  el("settings-role-note").textContent = `Режим доступа: ${roleLabel}`;
   el("settings-queue-note").textContent = isViewer() ? "" : `Не отправлено: ${state.outbox.length}`;
 }
 
@@ -415,6 +440,9 @@ function openSheet(tabNum, dateKey) {
   if (isViewer()) return; // вьюеру нечего редактировать — единая точка защиты для всех вызовов
   const emp = state.employees.find((e) => e.tabNum === tabNum);
   if (!emp) return;
+  // Список и так отфильтрован под роль (activeEmployees()), это доп. защита на случай
+  // прямого вызова в обход отфильтрованного списка — сервер всё равно отклонит запись.
+  if (isTimekeeper() && emp.paySystem !== "сдельная") return;
   state.sheetTarget = { tabNum, dateKey };
 
   const monthKey = dateKey.slice(0, 7);

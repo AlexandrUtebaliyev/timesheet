@@ -35,8 +35,9 @@ async function callScript(action, params) {
 export async function fetchInit() {
   if (isDemoMode()) {
     const snapshot = buildDemoSnapshot();
-    // ?demo=1&role=viewer — проверить вид/поведение режима вьюера без второго реального PIN.
-    const role = new URLSearchParams(location.search).get("role") === "viewer" ? "viewer" : "master";
+    // ?demo=1&role=viewer|timekeeper — проверить вид/поведение ограниченной роли без реального PIN.
+    const roleParam = new URLSearchParams(location.search).get("role");
+    const role = roleParam === "viewer" || roleParam === "timekeeper" ? roleParam : "master";
     return { employees: snapshot.employees, codes: snapshot.codes, normHours: snapshot.normHours, role };
   }
   const data = await callScript("init");
