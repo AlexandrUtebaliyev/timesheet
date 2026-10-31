@@ -435,9 +435,16 @@ function readCodes() {
 
 // ===================== веб-API =====================
 
-function checkPin(pin) {
-  var expected = PropertiesService.getScriptProperties().getProperty("PIN");
-  return expected && String(pin) === String(expected);
+// "master" — полный доступ (чтение + запись через doPost), PIN в Script Properties.
+// "viewer" — только чтение (doGet), отдельный VIEW_PIN в Script Properties; необязателен —
+// если не задан, режима вьюера просто нет. null — PIN не подошёл ни под одну роль.
+function resolveRole(pin) {
+  var props = PropertiesService.getScriptProperties();
+  var masterPin = props.getProperty("PIN");
+  var viewPin = props.getProperty("VIEW_PIN");
+  if (masterPin && String(pin) === String(masterPin)) return "master";
+  if (viewPin && String(pin) === String(viewPin)) return "viewer";
+  return null;
 }
 
 function jsonResponse(obj) {
@@ -447,13 +454,15 @@ function jsonResponse(obj) {
 function doGet(e) {
   try {
     var params = e.parameter || {};
-    if (!checkPin(params.pin)) {
+    var role = resolveRole(params.pin);
+    if (!role) {
       return jsonResponse({ ok: false, error: "Доступ запрещён" });
     }
 
     if (params.action === "init") {
       return jsonResponse({
         ok: true,
+        role: role,
         employees: readEmployees(true),
         codes: readCodes(),
         normHours: NORM_HOURS,
@@ -525,8 +534,12 @@ function doPost(e) {
     if (!Array.isArray(records)) {
       return jsonResponse({ ok: false, error: "Неверный формат запроса" });
     }
-    if (!checkPin(pin)) {
+    var role = resolveRole(pin);
+    if (!role) {
       return jsonResponse({ ok: false, error: "Доступ запрещён" });
+    }
+    if (role !== "master") {
+      return jsonResponse({ ok: false, error: "Доступ только для чтения" });
     }
 
     var lock = LockService.getScriptLock();

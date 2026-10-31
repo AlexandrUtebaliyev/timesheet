@@ -35,10 +35,12 @@ async function callScript(action, params) {
 export async function fetchInit() {
   if (isDemoMode()) {
     const snapshot = buildDemoSnapshot();
-    return { employees: snapshot.employees, codes: snapshot.codes, normHours: snapshot.normHours };
+    // ?demo=1&role=viewer — проверить вид/поведение режима вьюера без второго реального PIN.
+    const role = new URLSearchParams(location.search).get("role") === "viewer" ? "viewer" : "master";
+    return { employees: snapshot.employees, codes: snapshot.codes, normHours: snapshot.normHours, role };
   }
   const data = await callScript("init");
-  return { employees: data.employees, codes: data.codes, normHours: data.normHours };
+  return { employees: data.employees, codes: data.codes, normHours: data.normHours, role: data.role || "master" };
 }
 
 export async function fetchMonth(month) {

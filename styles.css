@@ -126,6 +126,17 @@ button {
   color: #ffcf9e;
 }
 
+#viewer-banner {
+  margin: 0 12px 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
 /* ---------- чипы ---------- */
 
 .chips {

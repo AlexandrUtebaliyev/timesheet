@@ -12,6 +12,7 @@ const state = {
   employees: [],
   codes: [],
   normHours: 8,
+  role: "master", // "master" (запись) | "viewer" (только чтение) — приходит от сервера по PIN
   monthCache: new Map(), // "YYYY-MM" -> {entries, loadedAt, offline}
   outbox: [],
   currentDate: new Date(),
@@ -33,6 +34,10 @@ function cacheKey(key) {
 
 function isCurrentModeRecord(record) {
   return !!record.demo === config.isDemoMode();
+}
+
+function isViewer() {
+  return state.role === "viewer";
 }
 
 // ---------- запуск ----------
@@ -104,6 +109,7 @@ async function loadReferenceData() {
     const data = await api.fetchInit();
     state.employees = data.employees;
     state.codes = data.codes;
+    state.role = data.role || "master";
     serverNormHours = data.normHours;
     await queue.setCache(cacheKey("ref"), data);
   } catch (err) {
@@ -111,6 +117,7 @@ async function loadReferenceData() {
     if (cached) {
       state.employees = cached.value.employees;
       state.codes = cached.value.codes;
+      state.role = cached.value.role || "master";
       serverNormHours = cached.value.normHours;
       state.loadError = `Не удалось обновить с сервера (${err.message || err}) — показаны данные из кеша от ${new Date(cached.savedAt).toLocaleString("ru-RU")}`;
     } else {
@@ -146,6 +153,10 @@ async function ensureMonthLoaded(monthKey) {
 // Журнал месяца + несинхронизированные правки (последние по порядку — значит, выигрывают).
 function effectiveJournalForMonth(monthKey) {
   const cached = state.monthCache.get(monthKey) || { entries: [] };
+  // Вьюер не может создавать несинхронизированные правки (openSheet/fillAllEight
+  // заблокированы) — если в очереди что-то осталось, это чужие (мастера) неотправленные
+  // правки с этого же устройства, а не то, что вьюер должен видеть как актуальное значение.
+  if (isViewer()) return cached.entries;
   const pending = state.outbox
     .filter((r) => r.date.slice(0, 7) === monthKey)
     .map((r) => ({ date: r.date, tabNum: r.id, value: r.value }));
@@ -169,6 +180,7 @@ function renderAll() {
   renderSaveBar();
   el("day-chips").classList.toggle("hidden", state.screen !== "day");
   el("pay-filter").classList.toggle("hidden", state.screen !== "day" && state.screen !== "month");
+  el("viewer-banner").classList.toggle("hidden", !isViewer());
 }
 
 const WEEKDAY_NAMES = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
@@ -208,8 +220,17 @@ function renderDayScreen() {
   const totals = model.dayTotals(journal, emps, dateKey);
   renderChips(totals);
 
-  el("fill-all-eight").classList.toggle("hidden", sunday);
-  el("fill-all-eight").textContent = `Всем ${state.normHours} ч`;
+  el("fill-all-eight").classList.toggle("hidden", sunday || isViewer());
+  // Кнопка заполняет activeEmployees() — т.е. уже уважает фильтр «Оклад/Сдельная» сверху;
+  // подпись делает это явным, чтобы заполнить только сдельщиков было очевидно: выбрать
+  // фильтр «Сдельная», затем нажать кнопку — а не только мастеру держать это в уме.
+  const fillLabel =
+    state.paySystemFilter === "оклад"
+      ? `Окладным ${state.normHours} ч`
+      : state.paySystemFilter === "сдельная"
+        ? `Сдельщикам ${state.normHours} ч`
+        : `Всем ${state.normHours} ч`;
+  el("fill-all-eight").textContent = fillLabel;
 
   const list = el("day-list");
   list.innerHTML = "";
@@ -279,6 +300,7 @@ function renderChips(totals) {
 }
 
 function hasPendingEdit(dateKey, tabNum) {
+  if (isViewer()) return false; // вьюер не может ни создать, ни разрешить несинхронизированную правку
   return state.outbox.some((r) => r.date === dateKey && r.id === tabNum);
 }
 
@@ -373,12 +395,13 @@ function renderSettingsScreen() {
     btn.classList.toggle("active", btn.dataset.theme === config.getTheme());
   });
 
-  el("settings-queue-note").textContent = `Не отправлено: ${state.outbox.length}`;
+  el("settings-role-note").textContent = `Режим доступа: ${isViewer() ? "только просмотр" : "мастер (запись)"}`;
+  el("settings-queue-note").textContent = isViewer() ? "" : `Не отправлено: ${state.outbox.length}`;
 }
 
 function renderSaveBar() {
   const wrap = el("save-bar-wrap");
-  if (state.outbox.length === 0) {
+  if (state.outbox.length === 0 || isViewer()) {
     wrap.innerHTML = "";
     return;
   }
@@ -389,6 +412,7 @@ function renderSaveBar() {
 // ---------- нижняя панель ввода ----------
 
 function openSheet(tabNum, dateKey) {
+  if (isViewer()) return; // вьюеру нечего редактировать — единая точка защиты для всех вызовов
   const emp = state.employees.find((e) => e.tabNum === tabNum);
   if (!emp) return;
   state.sheetTarget = { tabNum, dateKey };
@@ -489,6 +513,7 @@ function findNextUnmarkedTab(dateKey, afterTabNum) {
 // ---------- действия ----------
 
 async function fillAllEight() {
+  if (isViewer()) return;
   const d = state.currentDate;
   const dateKey = model.toDateKey(d.getFullYear(), d.getMonth() + 1, d.getDate());
   if (model.isSunday(dateKey)) return;
@@ -567,7 +592,7 @@ async function resolveConflict(uuid, choice) {
 }
 
 async function flushQueue() {
-  if (state.outbox.length === 0) return;
+  if (state.outbox.length === 0 || isViewer()) return;
   if (navigator.onLine) {
     const conflicts = await checkConflicts();
     if (conflicts.length) {
@@ -612,7 +637,9 @@ function updateNetworkBanner() {
     banner.textContent = `Нет сети · данные от ${time}`;
   } else {
     banner.classList.remove("offline");
-    banner.textContent = state.outbox.length ? `Не отправлено: ${state.outbox.length}` : "";
+    // У вьюера нет своих несинхронизированных правок (openSheet/fillAllEight заблокированы);
+    // если на этом устройстве раньше писали мастером и не отправили — это не забота вьюера.
+    banner.textContent = state.outbox.length && !isViewer() ? `Не отправлено: ${state.outbox.length}` : "";
   }
 }
 
