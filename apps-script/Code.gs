@@ -163,8 +163,11 @@ function buildTabelSheet(sheet) {
   sheet.getRange("A5").setValue("Цех металообработки");
   sheet.getRange("P10").setValue("ТАБЕЛЬ УЧЕТА РАБОЧЕГО ВРЕМЕНИ И РАСЧЕТА ЗАРАБОТНОЙ ПЛАТЫ");
 
-  // AH11 — первое число месяца; источник правды для всей сетки. Прячем его, т.к. это
+  // AN11 — первое число месяца; источник правды для всей сетки. Прячем его, т.к. это
   // технический параметр, а не часть печатной формы.
+  // ВАЖНО: не класть эту ячейку в столбец AH — AH одновременно последний столбец сетки
+  // дней (день 31, D..AH = 31 столбец), и hideColumns на нём прятал бы весь день 31 у
+  // всех сотрудников. AN (40) — первый свободный столбец правее итогов (AI..AM).
   // Строим дату на полдень UTC (а не "new Date(); setDate(1)", которая берёт текущее
   // время суток) — иначе при несовпадении часового пояса проекта Apps Script и часового
   // пояса таблицы дата может "съехать" на соседний день и формулы D18:AH29 перестанут
@@ -173,11 +176,14 @@ function buildTabelSheet(sheet) {
   var tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
   var ym = Utilities.formatDate(now, tz, "yyyy-MM");
   var first = new Date(ym + "-01T12:00:00Z");
-  sheet.getRange("AH11").setValue(first).setNumberFormat("dd.mm.yyyy");
-  sheet.hideColumns(34, 1); // AH = столбец 34
+  if (sheet.getMaxColumns() < 40) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), 40 - sheet.getMaxColumns());
+  }
+  sheet.getRange("AN11").setValue(first).setNumberFormat("dd.mm.yyyy");
+  sheet.hideColumns(40, 1); // AN = столбец 40
 
   sheet.getRange("O11").setFormula(
-    '="За "&SWITCH(MONTH($AH$11),1,"январь",2,"февраль",3,"март",4,"апрель",5,"май",6,"июнь",7,"июль",8,"август",9,"сентябрь",10,"октябрь",11,"ноябрь",12,"декабрь")&" "&YEAR($AH$11)&" года"'
+    '="За "&SWITCH(MONTH($AN$11),1,"январь",2,"февраль",3,"март",4,"апрель",5,"май",6,"июнь",7,"июль",8,"август",9,"сентябрь",10,"октябрь",11,"ноябрь",12,"декабрь")&" "&YEAR($AN$11)&" года"'
   );
 
   sheet.getRange("AI3").setValue("Утверждаю:");
@@ -195,7 +201,7 @@ function buildTabelSheet(sheet) {
     var colLetter = columnToLetter(col);
     sheet
       .getRange(colLetter + "14")
-      .setFormula("=IF(MONTH($AH$11+COLUMN()-4)=MONTH($AH$11),$AH$11+COLUMN()-4,\"\")")
+      .setFormula("=IF(MONTH($AN$11+COLUMN()-4)=MONTH($AN$11),$AN$11+COLUMN()-4,\"\")")
       .setNumberFormat("d");
     sheet.getRange(colLetter + "13").setFormula('=IF(' + colLetter + '14="","",IF(WEEKDAY(' + colLetter + '14)=1,"В",""))');
   }
@@ -235,6 +241,12 @@ function buildTabelSheet(sheet) {
   sheet.getRange("C36").setValue("Минбаев К.К.");
 
   applyTabelConditionalFormatting(sheet);
+
+  // Лист целиком со скрытыми линиями сетки (hideGridlines) — без явных границ таблица
+  // выглядит совсем без линий. Обводим шапку с номерами дней, саму сетку отметок и
+  // строку ИТОГО: A13:AM30 (включает A..C ФИО/должность, D..AH дни, AI..AM итоги).
+  var tableRange = sheet.getRange("A13:AM30");
+  tableRange.setBorder(true, true, true, true, true, true, "#999999", SpreadsheetApp.BorderStyle.SOLID);
 
   var dataRange = sheet.getRange(18, 4, 12, 31); // D18:AH29
   var protection = dataRange.protect().setDescription("Табель — печатная форма, собирается формулами из Журнала");
@@ -293,7 +305,7 @@ function archiveCurrentMonth() {
     SpreadsheetApp.getUi().alert('Лист "' + SHEET_TABEL + '" не найден.');
     return;
   }
-  var firstDay = sheet.getRange("AH11").getValue();
+  var firstDay = sheet.getRange("AN11").getValue();
   var monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
   var name = "Табель_" + monthNames[firstDay.getMonth()] + "_" + firstDay.getFullYear();
 
