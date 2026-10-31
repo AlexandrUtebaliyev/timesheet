@@ -106,5 +106,6 @@ export function makeRecord(date, tabNum, value, knownTs) {
     clientTs: new Date().toISOString(),
     deviceId: getDeviceId(),
     knownTs,
+    demo: isDemoMode(), // чтобы очередь никогда не путала демо-правки с боевыми, см. DECISIONS.md
   };
 }

@@ -73,10 +73,12 @@ export async function countOutbox() {
 }
 
 // Отправляет накопленную очередь через переданную функцию sendBatch(records) -> results.
-// Успешно принятые (ok, включая дубликаты) удаляются из очереди; неуспешные остаются
-// и получают пометку lastError для показа пользователю.
-export async function flush(sendBatch) {
-  const records = await getOutbox();
+// filterFn решает, какие записи из всей очереди сейчас уместно отправлять (например,
+// только относящиеся к текущему режиму демо/боевой — см. app.js) — остальные остаются
+// в очереди нетронутыми. Успешно принятые (ok, включая дубликаты) удаляются из очереди;
+// неуспешные остаются и получают пометку lastError для показа пользователю.
+export async function flush(sendBatch, filterFn = () => true) {
+  const records = (await getOutbox()).filter(filterFn);
   if (!records.length) return { sent: 0, failed: 0 };
 
   let results;

@@ -19,9 +19,20 @@ const state = {
   monthHalf: 1,
   selectedEmployeeTab: null,
   sheetTarget: null, // {tabNum, dateKey}
+  loadError: null, // текст реальной причины, если не удалось получить справочники
 };
 
 const el = (id) => document.getElementById(id);
+
+// Демо-режим и обычный режим живут в одной IndexedDB (один origin) — без этого
+// префикса демо-данные перезаписывали бы реальный кеш и наоборот (см. DECISIONS.md).
+function cacheKey(key) {
+  return (config.isDemoMode() ? "demo:" : "real:") + key;
+}
+
+function isCurrentModeRecord(record) {
+  return !!record.demo === config.isDemoMode();
+}
 
 // ---------- запуск ----------
 
@@ -38,7 +49,7 @@ async function main() {
   wireStaticEvents();
 
   await loadReferenceData();
-  state.outbox = await queue.getOutbox();
+  state.outbox = (await queue.getOutbox()).filter(isCurrentModeRecord);
   await ensureMonthLoaded(monthKeyOf(state.currentDate));
 
   renderAll();
@@ -87,20 +98,23 @@ function applyTheme() {
 
 async function loadReferenceData() {
   let serverNormHours = state.normHours;
+  state.loadError = null;
   try {
     const data = await api.fetchInit();
     state.employees = data.employees;
     state.codes = data.codes;
     serverNormHours = data.normHours;
-    await queue.setCache("ref", data);
+    await queue.setCache(cacheKey("ref"), data);
   } catch (err) {
-    const cached = await queue.getCache("ref");
+    const cached = await queue.getCache(cacheKey("ref"));
     if (cached) {
       state.employees = cached.value.employees;
       state.codes = cached.value.codes;
       serverNormHours = cached.value.normHours;
+      state.loadError = `Не удалось обновить с сервера (${err.message || err}) — показаны данные из кеша от ${new Date(cached.savedAt).toLocaleString("ru-RU")}`;
     } else {
-      showToast("Нет сети и нет сохранённых данных");
+      state.loadError = `Не удалось загрузить список сотрудников: ${err.message || err}`;
+      showToast(state.loadError);
     }
   }
   // Норма из таблицы — значение по умолчанию; пользователь может переопределить её
@@ -117,9 +131,9 @@ async function ensureMonthLoaded(monthKey) {
     const data = await api.fetchMonth(monthKey);
     const entry = { entries: data.entries, loadedAt: new Date().toISOString(), offline: false };
     state.monthCache.set(monthKey, entry);
-    await queue.setCache("month:" + monthKey, { entries: data.entries, loadedAt: entry.loadedAt });
+    await queue.setCache(cacheKey("month:" + monthKey), { entries: data.entries, loadedAt: entry.loadedAt });
   } catch (err) {
-    const cached = await queue.getCache("month:" + monthKey);
+    const cached = await queue.getCache(cacheKey("month:" + monthKey));
     if (cached) {
       state.monthCache.set(monthKey, { entries: cached.value.entries, loadedAt: cached.value.loadedAt, offline: true });
     } else {
@@ -196,6 +210,19 @@ function renderDayScreen() {
 
   const list = el("day-list");
   list.innerHTML = "";
+
+  if (emps.length === 0) {
+    list.innerHTML = `
+      <div class="chip" style="white-space:normal;line-height:1.5">
+        Список сотрудников пуст.${state.loadError ? " " + escapeHtml(state.loadError) : ""}
+        Проверьте: лист «Сотрудники» в таблице (есть строки, в столбце «Активен» — «да»),
+        адрес веб-приложения и PIN в «Настройках», и что веб-приложение Apps Script опубликовано
+        с доступом «Все».
+      </div>
+    `;
+    return;
+  }
+
   for (const emp of emps) {
     const value = model.getCellValue(journal, dateKey, emp.tabNum);
     const row = document.createElement("button");
@@ -484,7 +511,7 @@ async function checkConflicts() {
       serverEntries = serverEntries.concat(data.entries);
       const loadedAt = new Date().toISOString();
       state.monthCache.set(m, { entries: data.entries, loadedAt, offline: false });
-      await queue.setCache("month:" + m, { entries: data.entries, loadedAt });
+      await queue.setCache(cacheKey("month:" + m), { entries: data.entries, loadedAt });
     } catch (err) {
       // эта помесячная проверка недоступна офлайн — конфликт по ней просто не будет обнаружен сейчас
     }
@@ -530,7 +557,7 @@ async function resolveConflict(uuid, choice) {
     rec.knownTs = new Date().toISOString();
     await queue.enqueue(rec);
   }
-  state.outbox = await queue.getOutbox();
+  state.outbox = (await queue.getOutbox()).filter(isCurrentModeRecord);
   closeSheet();
   renderAll();
   flushQueue();
@@ -545,8 +572,8 @@ async function flushQueue() {
       return;
     }
   }
-  const result = await queue.flush(api.sendBatch);
-  state.outbox = await queue.getOutbox();
+  const result = await queue.flush(api.sendBatch, isCurrentModeRecord);
+  state.outbox = (await queue.getOutbox()).filter(isCurrentModeRecord);
   renderAll();
   if (result.networkError) {
     showToast("Нет сети — изменения сохранены локально");
@@ -569,6 +596,13 @@ function updateNetworkBanner() {
   const banner = el("network-banner");
   const monthKey = monthKeyOf(state.currentDate);
   const cached = state.monthCache.get(monthKey);
+
+  if (state.loadError) {
+    banner.classList.add("offline");
+    banner.textContent = state.loadError;
+    return;
+  }
+
   if (!navigator.onLine) {
     banner.classList.add("offline");
     const time = cached && cached.loadedAt ? new Date(cached.loadedAt).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) : "—";
