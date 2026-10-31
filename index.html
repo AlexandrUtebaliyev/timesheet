@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Табель — Алтын Таға</title>
+  <meta name="theme-color" content="#15171a" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Экран первичной настройки: показывается, если не задан адрес скрипта/PIN и это не ?demo=1 -->
+  <section id="setup-screen" class="setup-screen hidden">
+    <h1>Настройка табеля</h1>
+    <p>Укажите адрес веб-приложения Google Apps Script и PIN. Их можно изменить позже в «Настройках».</p>
+    <div class="settings-field">
+      <label for="setup-url">Адрес веб-приложения</label>
+      <input id="setup-url" type="url" placeholder="https://script.google.com/macros/s/.../exec" />
+    </div>
+    <div class="settings-field">
+      <label for="setup-pin">PIN</label>
+      <input id="setup-pin" type="password" inputmode="numeric" placeholder="PIN" />
+    </div>
+    <button id="setup-save" class="settings-save">Сохранить и продолжить</button>
+    <p class="settings-note">Можно открыть приложение с <code>?demo=1</code> в адресе, чтобы попробовать без таблицы.</p>
+  </section>
+
+  <div id="app" class="hidden" style="display:flex; flex-direction:column; min-height:100vh;">
+    <header class="topbar">
+      <button id="nav-prev" class="topbar__nav-btn" aria-label="Предыдущий день">←</button>
+      <div id="topbar-title" class="topbar__title topbar__title--tap">
+        <span id="topbar-title-text">День</span>
+        <span id="topbar-subtitle" class="topbar__subtitle"></span>
+      </div>
+      <button id="nav-next" class="topbar__nav-btn" aria-label="Следующий день">→</button>
+    </header>
+
+    <div id="network-banner"></div>
+
+    <div id="day-chips" class="chips"></div>
+
+    <main>
+      <section id="screen-day" class="screen active">
+        <button id="fill-all-eight" class="all-eight">Всем 8 ч</button>
+        <div id="day-list" class="person-list"></div>
+      </section>
+
+      <section id="screen-month" class="screen">
+        <div class="month-toggle">
+          <button id="month-half-1" class="active">1–15</button>
+          <button id="month-half-2">16–конец</button>
+        </div>
+        <div class="month-grid-wrap">
+          <table class="month-grid" id="month-table"></table>
+        </div>
+        <div class="month-totals" id="month-totals"></div>
+      </section>
+
+      <section id="screen-employee" class="screen">
+        <div class="employee-header">
+          <button id="employee-back" class="topbar__nav-btn" aria-label="Назад">←</button>
+          <div class="employee-header__name" id="employee-name"></div>
+          <div class="employee-header__position" id="employee-position"></div>
+        </div>
+        <div class="employee-tiles">
+          <div class="employee-tile"><strong id="employee-days">0</strong><span>дней</span></div>
+          <div class="employee-tile"><strong id="employee-hours">0</strong><span>часов</span></div>
+          <div class="employee-tile"><strong id="employee-overtime">0</strong><span>переработка</span></div>
+        </div>
+        <div class="employee-codes" id="employee-codes"></div>
+      </section>
+
+      <section id="screen-settings" class="screen">
+        <div class="settings-list">
+          <div class="settings-field">
+            <label for="settings-url">Адрес веб-приложения</label>
+            <input id="settings-url" type="url" />
+          </div>
+          <div class="settings-field">
+            <label for="settings-pin">PIN</label>
+            <input id="settings-pin" type="password" inputmode="numeric" />
+          </div>
+          <div class="settings-field">
+            <label>Норма часов</label>
+            <input id="settings-norm" type="text" disabled />
+          </div>
+          <div class="settings-field">
+            <label>Тема</label>
+            <div class="theme-switch" id="theme-switch">
+              <button data-theme="auto">Авто</button>
+              <button data-theme="light">Светлая</button>
+              <button data-theme="dark">Тёмная</button>
+            </div>
+          </div>
+          <button id="settings-save" class="settings-save">Сохранить</button>
+          <div class="settings-note" id="settings-queue-note"></div>
+        </div>
+      </section>
+    </main>
+
+    <div id="save-bar-wrap"></div>
+
+    <nav class="bottom-nav">
+      <button data-screen="day" class="active"><span class="icon">📅</span>День</button>
+      <button data-screen="month"><span class="icon">🗓️</span>Месяц</button>
+      <button data-screen="settings"><span class="icon">⚙️</span>Настройки</button>
+    </nav>
+  </div>
+
+  <div id="sheet-root"></div>
+  <div id="toast-root"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

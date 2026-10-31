@@ -1,0 +1,35 @@
+{
+  "employees": [
+    { "tabNum": 1, "name": "Иванов И.И.", "position": "токарь", "active": true },
+    { "tabNum": 2, "name": "Петров П.П.", "position": "фрезеровщик", "active": true },
+    { "tabNum": 3, "name": "Сидоров С.С.", "position": "слесарь", "active": true },
+    { "tabNum": 4, "name": "Кузнецов К.К.", "position": "сварщик", "active": true },
+    { "tabNum": 5, "name": "Уволенный У.У.", "position": "слесарь", "active": false }
+  ],
+  "codes": [
+    { "code": "В", "label": "Выходной", "color": "#B3E5A1", "paid": null },
+    { "code": "О", "label": "Отпуск", "color": "#FAE2D5", "paid": true },
+    { "code": "Б", "label": "Больничный", "color": "#FFFF66", "paid": true },
+    { "code": "БС", "label": "Без сохранения содержания", "color": "#FFCCFF", "paid": false },
+    { "code": "К", "label": "Командировка", "color": "#33CCCC", "paid": true },
+    { "code": "П", "label": "Прогул", "color": "#D9D9D9", "paid": false },
+    { "code": "ог", "label": "Отгул", "color": "#FABF8F", "paid": false },
+    { "code": "до", "label": "Дополнительный отпуск", "color": "#99FF99", "paid": true },
+    { "code": "у", "label": "Учёба", "color": "#FFFFCC", "paid": false }
+  ],
+  "journal": [
+    { "date": "2026-11-02", "tabNum": 1, "value": 8, "who": "мастер", "ts": "2026-11-02T08:00:00Z", "device": "d1", "uuid": "u1" },
+    { "date": "2026-11-02", "tabNum": 1, "value": 9, "who": "мастер", "ts": "2026-11-02T18:00:00Z", "device": "d1", "uuid": "u2" },
+
+    { "date": "2026-11-03", "tabNum": 2, "value": 4, "who": "мастер", "ts": "2026-11-03T08:00:00Z", "device": "d1", "uuid": "u3" },
+    { "date": "2026-11-03", "tabNum": 2, "value": "", "who": "мастер", "ts": "2026-11-03T09:00:00Z", "device": "d1", "uuid": "u4" },
+
+    { "date": "2026-11-02", "tabNum": 3, "value": "Б", "who": "мастер", "ts": "2026-11-02T08:00:00Z", "device": "d1", "uuid": "u5" },
+
+    { "date": "2026-11-02", "tabNum": 4, "value": 7.5, "who": "мастер", "ts": "2026-11-02T08:00:00Z", "device": "d1", "uuid": "u6" },
+    { "date": "2026-11-03", "tabNum": 4, "value": 8.5, "who": "мастер", "ts": "2026-11-03T08:00:00Z", "device": "d1", "uuid": "u7" },
+
+    { "date": "2026-11-09", "tabNum": 1, "value": 10, "who": "мастер", "ts": "2026-11-09T08:00:00Z", "device": "d1", "uuid": "u8" },
+    { "date": "2026-11-16", "tabNum": 1, "value": 8, "who": "мастер", "ts": "2026-11-16T08:00:00Z", "device": "d1", "uuid": "u9" }
+  ]
+}

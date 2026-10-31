@@ -1,0 +1,8 @@
+﻿PROMPT.md
+CLAUDE.md
+DECISIONS.md
+PROGRESS.md
+start.cmd
+claude-settings.json
+.claude/
+node_modules/
