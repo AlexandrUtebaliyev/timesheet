@@ -229,9 +229,19 @@ function buildTabelSheet(sheet) {
   var lastEmployeeRow = firstEmployeeRow + employeeCount - 1;
   var totalRow = lastEmployeeRow + 1;
 
-  // A18 — спиллящийся список активных табельных номеров, B/C — ВПР.
+  // A18 — спиллящийся список активных табельных номеров, отсортированный: сперва
+  // "оклад", потом "сдельная" (столбец E «Система оплаты»; алфавитный порядок кириллицы
+  // уже даёт нужную последовательность — "о" раньше "с"), внутри каждой группы — по
+  // возрастанию таб. №, чтобы порядок был предсказуемым. Пустая «Система оплаты» (не
+  // назначена) — SORT уводит такие строки в конец независимо от направления сортировки.
+  // B/C и ячейки дней ниже смотрят на свой же $A<row> по значению, а не по позиции —
+  // поэтому сортировка (и добавление нового сотрудника в любое место списка) не путает
+  // часы уже существующих сотрудников: каждая строка находит свой журнал по таб. №,
+  // где бы она ни оказалась после сортировки.
+  var activeTabNums = SHEET_EMPLOYEES + '!$A$2:$A$1000,' + SHEET_EMPLOYEES + '!$D$2:$D$1000="да"';
+  var activePaySystem = SHEET_EMPLOYEES + '!$E$2:$E$1000,' + SHEET_EMPLOYEES + '!$D$2:$D$1000="да"';
   sheet.getRange("A" + firstEmployeeRow).setFormula(
-    '=IFERROR(FILTER(' + SHEET_EMPLOYEES + '!$A$2:$A$1000,' + SHEET_EMPLOYEES + '!$D$2:$D$1000="да"),"")'
+    '=IFERROR(SORT(FILTER(' + activeTabNums + '),FILTER(' + activePaySystem + '),TRUE,FILTER(' + activeTabNums + '),TRUE),"")'
   );
   for (var row = firstEmployeeRow; row <= lastEmployeeRow; row++) {
     sheet.getRange("B" + row).setFormula('=IFERROR(VLOOKUP(A' + row + ',' + SHEET_EMPLOYEES + '!$A:$C,2,FALSE),"")');
