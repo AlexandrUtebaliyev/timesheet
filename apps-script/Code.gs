@@ -248,6 +248,17 @@ function buildTabelSheet(sheet) {
   var tableRange = sheet.getRange("A13:AM30");
   tableRange.setBorder(true, true, true, true, true, true, "#999999", SpreadsheetApp.BorderStyle.SOLID);
 
+  // Ширины столбцов и выравнивание — компактная сетка 31 дня + читаемые ФИО/итоги.
+  sheet.setColumnWidth(1, 40); // A — №
+  sheet.setColumnWidth(2, 230); // B — ФИО
+  sheet.setColumnWidth(3, 130); // C — Должность
+  sheet.setColumnWidths(4, 31, 30); // D..AH — дни
+  sheet.setColumnWidths(35, 5, 65); // AI..AM — итоги
+  sheet.getRange("D13:AH29").setHorizontalAlignment("center");
+  sheet.getRange("D14:AH14").setFontWeight("bold");
+  sheet.getRange("A30:AM30").setFontWeight("bold");
+  sheet.getRange("A18:A29").setHorizontalAlignment("center");
+
   var dataRange = sheet.getRange(18, 4, 12, 31); // D18:AH29
   var protection = dataRange.protect().setDescription("Табель — печатная форма, собирается формулами из Журнала");
   protection.setWarningOnly(true);
