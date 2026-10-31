@@ -165,13 +165,19 @@ function buildTabelSheet(sheet) {
 
   // AH11 — первое число месяца; источник правды для всей сетки. Прячем его, т.к. это
   // технический параметр, а не часть печатной формы.
-  var first = new Date();
-  first.setDate(1);
+  // Строим дату на полдень UTC (а не "new Date(); setDate(1)", которая берёт текущее
+  // время суток) — иначе при несовпадении часового пояса проекта Apps Script и часового
+  // пояса таблицы дата может "съехать" на соседний день и формулы D18:AH29 перестанут
+  // находить записи Журнала за этот день (см. DECISIONS.md).
+  var now = new Date();
+  var tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+  var ym = Utilities.formatDate(now, tz, "yyyy-MM");
+  var first = new Date(ym + "-01T12:00:00Z");
   sheet.getRange("AH11").setValue(first).setNumberFormat("dd.mm.yyyy");
   sheet.hideColumns(34, 1); // AH = столбец 34
 
   sheet.getRange("O11").setFormula(
-    '="За "&SWITCH(MONTH($AH$11),1,"января",2,"февраля",3,"марта",4,"апреля",5,"мая",6,"июня",7,"июля",8,"августа",9,"сентября",10,"октября",11,"ноября",12,"декабря")&" "&YEAR($AH$11)&" года"'
+    '="За "&SWITCH(MONTH($AH$11),1,"январь",2,"февраль",3,"март",4,"апрель",5,"май",6,"июнь",7,"июль",8,"август",9,"сентябрь",10,"октябрь",11,"ноябрь",12,"декабрь")&" "&YEAR($AH$11)&" года"'
   );
 
   sheet.getRange("AI3").setValue("Утверждаю:");
@@ -476,7 +482,9 @@ function processRecord(rec) {
   }
 
   var who = Session.getActiveUser().getEmail() || "мастер";
-  var date = new Date(rec.date + "T00:00:00");
+  // Полдень UTC — защита от сдвига на соседний календарный день при несовпадении
+  // часового пояса проекта и часового пояса таблицы (см. buildTabelSheet и DECISIONS.md).
+  var date = new Date(rec.date + "T12:00:00Z");
   sheet.appendRow([date, rec.id, value, who, new Date(), rec.deviceId || "", rec.uuid]);
 
   return { uuid: rec.uuid, ok: true };
