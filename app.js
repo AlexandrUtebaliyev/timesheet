@@ -174,7 +174,16 @@ function effectiveJournalForMonth(monthKey) {
 
 function activeEmployees() {
   const active = state.employees.filter((e) => e.active);
-  return model.filterByPaySystem(active, state.paySystemFilter);
+  const filtered = model.filterByPaySystem(active, state.paySystemFilter);
+  return model.sortEmployeesForDisplay(filtered);
+}
+
+// Группа сотрудника по системе оплаты — для заголовков-разделителей в списках.
+// Порядок меток соответствует sortEmployeesForDisplay() в model.js.
+function paySystemGroupLabel(emp) {
+  if (emp.paySystem === "оклад") return "Оклад";
+  if (emp.paySystem === "сдельная") return "Сдельная";
+  return "Без категории";
 }
 
 // ---------- рендер ----------
@@ -271,12 +280,29 @@ function renderDayScreen() {
     return;
   }
 
-  for (const emp of emps) {
+  // Заголовок-разделитель группы показываем только если сейчас видно больше одной
+  // группы (иначе, когда уже выбран фильтр «Оклад»/«Сдельная», это просто дублирует
+  // сам фильтр сверху). Группы и порядок — те же, что строит лист «Табель».
+  const showGroupHeaders = new Set(emps.map(paySystemGroupLabel)).size > 1;
+  let prevGroup = null;
+
+  emps.forEach((emp, index) => {
+    if (showGroupHeaders) {
+      const group = paySystemGroupLabel(emp);
+      if (group !== prevGroup) {
+        const header = document.createElement("div");
+        header.className = "person-list__group-header";
+        header.textContent = group;
+        list.appendChild(header);
+        prevGroup = group;
+      }
+    }
+
     const value = model.getCellValue(journal, dateKey, emp.tabNum);
     const row = document.createElement("button");
     row.className = "person-row";
     row.innerHTML = `
-      <span class="person-row__num">${emp.tabNum}</span>
+      <span class="person-row__num">${index + 1}</span>
       <span class="person-row__info">
         <span class="person-row__name">${escapeHtml(emp.name)}</span>
         <span class="person-row__position">${escapeHtml(emp.position)}${emp.paySystem ? " · " + escapeHtml(emp.paySystem) : ""}</span>
@@ -307,7 +333,7 @@ function renderDayScreen() {
 
     row.addEventListener("click", () => openSheet(emp.tabNum, dateKey));
     list.appendChild(row);
-  }
+  });
 }
 
 function renderChips(totals) {
@@ -348,8 +374,21 @@ function renderMonthScreen() {
   }
   thead += `<th>Дни</th><th>Часы</th><th>Перераб.</th></tr>`;
 
+  // Заголовок-разделитель группы — тот же принцип, что в списке дня: только если
+  // сейчас видно больше одной группы, иначе это просто дублирует фильтр сверху.
+  const showGroupHeaders = new Set(grid.map(paySystemGroupLabel)).size > 1;
+  const colCount = 1 + (toDay - fromDay + 1) + 3;
+  let prevGroup = null;
+
   let rows = "";
   for (const emp of grid) {
+    if (showGroupHeaders) {
+      const group = paySystemGroupLabel(emp);
+      if (group !== prevGroup) {
+        rows += `<tr class="month-grid__group-row"><td colspan="${colCount}">${escapeHtml(group)}</td></tr>`;
+        prevGroup = group;
+      }
+    }
     const summary = model.monthSummaryForEmployee(journal, emp.tabNum, year, month, state.normHours);
     rows += `<tr><td class="name-col" data-tab="${emp.tabNum}">${escapeHtml(emp.name)}</td>`;
     for (let day = fromDay; day <= toDay; day++) {

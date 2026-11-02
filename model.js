@@ -101,6 +101,22 @@ export function filterByPaySystem(employees, paySystem) {
   return employees.filter((e) => e.paySystem === paySystem);
 }
 
+// Группировка и сортировка для отображения: сперва "оклад", потом "сдельная",
+// потом сотрудники без назначенной системы оплаты — внутри каждой группы по
+// фамилии (ФИО начинается с фамилии). Тот же порядок, что строит лист «Табель»
+// в apps-script/Code.gs (computeTabelLayout), чтобы номер сотрудника на телефоне
+// совпадал с номером в печатной форме.
+const PAY_SYSTEM_RANK = { оклад: 0, сдельная: 1 };
+
+export function sortEmployeesForDisplay(employees) {
+  return [...employees].sort((a, b) => {
+    const rankA = PAY_SYSTEM_RANK[a.paySystem] ?? 2;
+    const rankB = PAY_SYSTEM_RANK[b.paySystem] ?? 2;
+    if (rankA !== rankB) return rankA - rankB;
+    return a.name.localeCompare(b.name, "ru");
+  });
+}
+
 // ---------- переработка и цвет ----------
 
 export function overtimeForHours(hours, normHours = NORM_HOURS) {
@@ -207,7 +223,7 @@ export function monthGrid(journal, employees, year, month) {
         const entry = map.get(journalKey(dateKey, emp.tabNum));
         values[dateKey] = entry ? entry.value : undefined;
       }
-      return { tabNum: emp.tabNum, name: emp.name, position: emp.position, values };
+      return { tabNum: emp.tabNum, name: emp.name, position: emp.position, paySystem: emp.paySystem, values };
     });
 }
 

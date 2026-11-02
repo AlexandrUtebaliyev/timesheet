@@ -151,6 +151,29 @@ check(
   false
 );
 
+// --- сортировка для отображения: оклад -> сдельная -> без категории, внутри по фамилии ---
+
+check(
+  "sortEmployeesForDisplay: оклад, затем сдельная по фамилии, затем без категории",
+  model.sortEmployeesForDisplay(activeEmployees).map((e) => e.tabNum),
+  [1, 2, 3, 4]
+);
+check(
+  "sortEmployeesForDisplay: сдельная группа отсортирована по фамилии (Петров раньше Сидорова)",
+  model.sortEmployeesForDisplay(activeEmployees).map((e) => e.name),
+  ["Иванов И.И.", "Петров П.П.", "Сидоров С.С.", "Кузнецов К.К."]
+);
+const unsortedPair = [
+  { tabNum: 9, name: "Яковлев Я.Я.", paySystem: "оклад" },
+  { tabNum: 8, name: "Антонов А.А.", paySystem: "оклад" },
+];
+model.sortEmployeesForDisplay(unsortedPair);
+check(
+  "sortEmployeesForDisplay: не мутирует исходный массив",
+  unsortedPair.map((e) => e.tabNum),
+  [9, 8]
+);
+
 // --- настраиваемая норма часов (граница 7.5/8/8.5 сдвигается вместе с нормой) ---
 
 check("цвет 8 при норме 10 (неполный)", model.colorForValue(8, codes, 10), "#BF4F14");

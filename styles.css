@@ -197,6 +197,19 @@ main {
   gap: 8px;
 }
 
+.person-list__group-header {
+  padding: 10px 4px 2px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.person-list__group-header:first-child {
+  padding-top: 2px;
+}
+
 .person-row {
   display: flex;
   align-items: center;
@@ -461,6 +474,19 @@ table.month-grid td.value-cell {
   font-weight: 700;
   color: #15171a;
   cursor: pointer;
+}
+
+table.month-grid tr.month-grid__group-row td {
+  position: sticky;
+  left: 0;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 6px 8px;
 }
 
 .month-totals {
