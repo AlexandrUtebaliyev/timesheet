@@ -287,7 +287,11 @@ function buildTabelSheet(sheet) {
     }
 
     if (group.subtotalRow !== null) {
-      sheet.getRange("A" + group.subtotalRow).setValue(group.label);
+      // Метка — в B, не в A: A на строке сотрудника держит порядковый номер и копирует
+      // узкий 24px формат архивного столбца "№" (под 1-2 цифры), в который "Итого
+      // (сдельная)" физически не влезает. В архиве подпись "ИТОГО:" и так стоит в B30
+      // (широкий столбец ФИО, 236px) — используем то же место для единообразия.
+      sheet.getRange("B" + group.subtotalRow).setValue(group.label);
       sheet.getRange("AI" + group.subtotalRow).setFormula("=SUM(AI" + group.startRow + ":AI" + group.endRow + ")");
       sheet.getRange("AJ" + group.subtotalRow).setFormula("=SUM(AJ" + group.startRow + ":AJ" + group.endRow + ")");
       sheet.getRange("AL" + group.subtotalRow).setFormula("=SUM(AL" + group.startRow + ":AL" + group.endRow + ")");
@@ -297,7 +301,7 @@ function buildTabelSheet(sheet) {
   // Грандтотал суммирует строки подытогов групп, а не весь диапазон firstEmployeeRow:
   // totalRow-1 — тот диапазон включает и сами подытоговые строки, и их сложение с
   // построчными суммами задвоило бы итог для каждой непустой группы.
-  sheet.getRange("A" + totalRow).setValue("ИТОГО");
+  sheet.getRange("B" + totalRow).setValue("ИТОГО"); // B, не A — см. комментарий у подытогов групп выше
   sheet.getRange("AI" + totalRow).setFormula("=" + sumOfGroupSubtotals(groups, "AI"));
   sheet.getRange("AJ" + totalRow).setFormula("=" + sumOfGroupSubtotals(groups, "AJ"));
   sheet.getRange("AL" + totalRow).setFormula("=" + sumOfGroupSubtotals(groups, "AL"));
