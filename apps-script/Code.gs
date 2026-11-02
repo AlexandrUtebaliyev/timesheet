@@ -185,8 +185,8 @@ function buildTabelSheet(sheet) {
   var tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
   var ym = Utilities.formatDate(now, tz, "yyyy-MM");
   var first = new Date(ym + "-01T12:00:00Z");
-  if (sheet.getMaxColumns() < 40) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), 40 - sheet.getMaxColumns());
+  if (sheet.getMaxColumns() < 41) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), 41 - sheet.getMaxColumns());
   }
   sheet.getRange("AN11").setValue(first).setNumberFormat("dd.mm.yyyy");
   sheet.hideColumns(40, 1); // AN = столбец 40
@@ -220,83 +220,185 @@ function buildTabelSheet(sheet) {
     sheet.getRange(colLetter + "13").setFormula('=IF(' + colLetter + '14="","",IF(WEEKDAY(' + colLetter + '14)=1,"В",""))');
   }
 
-  // Сотрудники: количество активных строк из "Сотрудники" определяет размер сетки —
-  // если сотрудников больше 12 (или меньше), таблица подстраивается, а не ломается
-  // (раньше FILTER на фиксированную сетку 18:29 падал в #REF!, если активных
-  // сотрудников становилось больше 12 и спилл "наезжал" на строку ИТОГО).
+  // Сотрудники разбиты на группы по системе оплаты — сперва "оклад", потом "сдельная",
+  // и (если такие есть) сотрудники без назначенной системы оплаты последними — с строкой
+  // промежуточного итога сразу после каждой непустой группы. computeTabelLayout() — общая
+  // точка для buildTabelSheet() и archiveCurrentMonth(), чтобы раскладка (а значит и
+  // диапазон защиты) не могла разойтись между пересборкой формы и архивацией месяца.
   var firstEmployeeRow = 18;
-  var employeeCount = Math.max(readEmployees(true).length, 1);
-  var lastEmployeeRow = firstEmployeeRow + employeeCount - 1;
-  var totalRow = lastEmployeeRow + 1;
+  var layout = computeTabelLayout(firstEmployeeRow);
+  var groups = layout.groups;
+  var totalRow = layout.totalRow;
 
-  // A18 — спиллящийся список активных табельных номеров, отсортированный: сперва
-  // "оклад", потом "сдельная" (столбец E «Система оплаты»; алфавитный порядок кириллицы
-  // уже даёт нужную последовательность — "о" раньше "с"), внутри каждой группы — по
-  // фамилии (столбец B «ФИО» начинается с фамилии). Пустая «Система оплаты» (не
-  // назначена) — SORT уводит такие строки в конец независимо от направления сортировки.
+  // AO<строка начала группы> — технический (скрытый) спиллящийся список табельных
+  // номеров ЭТОЙ группы, отсортированный по фамилии (столбец B «ФИО» начинается с
+  // фамилии). Раньше был один общий спилл на весь список — но с подытоговыми строками,
+  // вклинивающимися между группами, один большой спилл просто не может перепрыгнуть
+  // через подытог (спилл требует сплошного диапазона), поэтому теперь по формуле на
+  // группу, каждая спиллится только в свой сплошной блок строк.
   // Условие активности — TRIM(LOWER(...))="да", а не точное "=да": без этого лишний
   // пробел или другой регистр в столбце D ("Активен") тихо исключал сотрудника из
-  // ЭТОЙ формулы, хотя readEmployees() в API уже делает trim/lowercase и видел бы его —
+  // формулы, хотя readEmployees() в API уже делает trim/lowercase и видел бы его —
   // несовпадение ровно так теряло новых сотрудников при «Пересоздать форму» (живой
   // пример: "Активен" = " да" с пробелом у 30-го сотрудника).
-  // B/C и ячейки дней ниже смотрят на свой же $A<row> по значению, а не по позиции —
-  // поэтому сортировка (и добавление нового сотрудника в любое место списка) не путает
-  // часы уже существующих сотрудников: каждая строка находит свой журнал по таб. №,
-  // где бы она ни оказалась после сортировки.
+  // Столбец A в печатной форме — сквозной порядковый номер (1, 2, 3… по всем группам
+  // подряд, строки подытогов не считаются), не таб. №: таб. номера после сортировки по
+  // системе оплаты/фамилии больше не идут по порядку, а «№» в бланке — это позиция в
+  // списке, не идентификатор сотрудника. B/C и ячейки дней ниже смотрят на $AO<row>
+  // (реальный таб. №) по значению, а не на позицию строки — поэтому сортировка,
+  // разбиение на группы и добавление нового сотрудника в любое место списка не путают
+  // часы уже существующих сотрудников: каждая строка находит свой журнал по таб. №, где
+  // бы она ни оказалась после пересборки, независимо от того, что показывает колонка A.
   var activeCond = 'TRIM(LOWER(' + SHEET_EMPLOYEES + '!$D$2:$D$1000))="да"';
-  var tabNumFilter = 'FILTER(' + SHEET_EMPLOYEES + '!$A$2:$A$1000,' + activeCond + ')';
-  var paySystemFilter = 'FILTER(TRIM(LOWER(' + SHEET_EMPLOYEES + '!$E$2:$E$1000)),' + activeCond + ')';
-  var nameFilter = 'FILTER(TRIM(' + SHEET_EMPLOYEES + '!$B$2:$B$1000),' + activeCond + ')';
-  sheet.getRange("A" + firstEmployeeRow).setFormula(
-    '=IFERROR(SORT(' + tabNumFilter + ',' + paySystemFilter + ',TRUE,' + nameFilter + ',TRUE),"")'
-  );
-  for (var row = firstEmployeeRow; row <= lastEmployeeRow; row++) {
-    sheet.getRange("B" + row).setFormula('=IFERROR(VLOOKUP(A' + row + ',' + SHEET_EMPLOYEES + '!$A:$C,2,FALSE),"")');
-    sheet.getRange("C" + row).setFormula('=IFERROR(VLOOKUP(A' + row + ',' + SHEET_EMPLOYEES + '!$A:$C,3,FALSE),"")');
+  var employeeOrdinal = 0;
 
-    for (var col2 = 4; col2 <= 34; col2++) {
-      var cl = columnToLetter(col2);
-      var cell = cl + row;
-      var dayCell = cl + "$14";
-      sheet.getRange(cell).setFormula(
-        '=IF(' + dayCell + '="","",IFERROR(INDEX(FILTER(' + SHEET_JOURNAL + '!$C:$C,' + SHEET_JOURNAL + '!$B:$B=$A' + row + ',' + SHEET_JOURNAL + '!$A:$A=' + dayCell + '),COUNTIFS(' + SHEET_JOURNAL + '!$B:$B,$A' + row + ',' + SHEET_JOURNAL + '!$A:$A,' + dayCell + ')),IF(WEEKDAY(' + dayCell + ')=1,"В","")))'
+  for (var gi = 0; gi < groups.length; gi++) {
+    var group = groups[gi];
+
+    if (group.kind) {
+      var conds = [activeCond].concat(paySystemKindConditions(group.kind)).join(",");
+      var tabNumFilter = "FILTER(" + SHEET_EMPLOYEES + "!$A$2:$A$1000," + conds + ")";
+      var nameFilter = "FILTER(TRIM(" + SHEET_EMPLOYEES + "!$B$2:$B$1000)," + conds + ")";
+      sheet.getRange("AO" + group.startRow).setFormula(
+        "=IFERROR(SORT(" + tabNumFilter + "," + nameFilter + ",TRUE),\"\")"
       );
     }
 
-    sheet.getRange("AI" + row).setFormula("=COUNT(D" + row + ":AH" + row + ")");
-    sheet.getRange("AJ" + row).setFormula("=SUM(D" + row + ":AH" + row + ")");
-    sheet.getRange("AL" + row).setFormula(
-      "=SUM(ARRAYFORMULA(IF(ISNUMBER(D" + row + ":AH" + row + "),IF(D" + row + ":AH" + row + ">" + NORM_HOURS + ",D" + row + ":AH" + row + "-" + NORM_HOURS + ",0),0)))"
-    );
+    for (var row = group.startRow; row <= group.endRow; row++) {
+      employeeOrdinal++;
+      sheet.getRange("A" + row).setValue(employeeOrdinal); // порядковый номер
+      sheet.getRange("B" + row).setFormula('=IFERROR(VLOOKUP(AO' + row + ',' + SHEET_EMPLOYEES + '!$A:$C,2,FALSE),"")');
+      sheet.getRange("C" + row).setFormula('=IFERROR(VLOOKUP(AO' + row + ',' + SHEET_EMPLOYEES + '!$A:$C,3,FALSE),"")');
+
+      for (var col2 = 4; col2 <= 34; col2++) {
+        var cl = columnToLetter(col2);
+        var cell = cl + row;
+        var dayCell = cl + "$14";
+        sheet.getRange(cell).setFormula(
+          '=IF(' + dayCell + '="","",IFERROR(INDEX(FILTER(' + SHEET_JOURNAL + '!$C:$C,' + SHEET_JOURNAL + '!$B:$B=$AO' + row + ',' + SHEET_JOURNAL + '!$A:$A=' + dayCell + '),COUNTIFS(' + SHEET_JOURNAL + '!$B:$B,$AO' + row + ',' + SHEET_JOURNAL + '!$A:$A,' + dayCell + ')),IF(WEEKDAY(' + dayCell + ')=1,"В","")))'
+        );
+      }
+
+      sheet.getRange("AI" + row).setFormula("=COUNT(D" + row + ":AH" + row + ")");
+      sheet.getRange("AJ" + row).setFormula("=SUM(D" + row + ":AH" + row + ")");
+      sheet.getRange("AL" + row).setFormula(
+        "=SUM(ARRAYFORMULA(IF(ISNUMBER(D" + row + ":AH" + row + "),IF(D" + row + ":AH" + row + ">" + NORM_HOURS + ",D" + row + ":AH" + row + "-" + NORM_HOURS + ",0),0)))"
+      );
+    }
+
+    if (group.subtotalRow !== null) {
+      sheet.getRange("A" + group.subtotalRow).setValue(group.label);
+      sheet.getRange("AI" + group.subtotalRow).setFormula("=SUM(AI" + group.startRow + ":AI" + group.endRow + ")");
+      sheet.getRange("AJ" + group.subtotalRow).setFormula("=SUM(AJ" + group.startRow + ":AJ" + group.endRow + ")");
+      sheet.getRange("AL" + group.subtotalRow).setFormula("=SUM(AL" + group.startRow + ":AL" + group.endRow + ")");
+    }
   }
 
+  // Грандтотал суммирует строки подытогов групп, а не весь диапазон firstEmployeeRow:
+  // totalRow-1 — тот диапазон включает и сами подытоговые строки, и их сложение с
+  // построчными суммами задвоило бы итог для каждой непустой группы.
   sheet.getRange("A" + totalRow).setValue("ИТОГО");
-  sheet.getRange("AI" + totalRow).setFormula("=SUM(AI" + firstEmployeeRow + ":AI" + lastEmployeeRow + ")");
-  sheet.getRange("AJ" + totalRow).setFormula("=SUM(AJ" + firstEmployeeRow + ":AJ" + lastEmployeeRow + ")");
-  sheet.getRange("AL" + totalRow).setFormula("=SUM(AL" + firstEmployeeRow + ":AL" + lastEmployeeRow + ")");
+  sheet.getRange("AI" + totalRow).setFormula("=" + sumOfGroupSubtotals(groups, "AI"));
+  sheet.getRange("AJ" + totalRow).setFormula("=" + sumOfGroupSubtotals(groups, "AJ"));
+  sheet.getRange("AL" + totalRow).setFormula("=" + sumOfGroupSubtotals(groups, "AL"));
 
   sheet.getRange("B" + (totalRow + 3)).setValue("Нач. цеха");
   sheet.getRange("C" + (totalRow + 3)).setValue("Утебалиев А.В.");
   sheet.getRange("B" + (totalRow + 6)).setValue("Гл. инженер");
   sheet.getRange("C" + (totalRow + 6)).setValue("Минбаев К.К.");
 
-  applyTabelConditionalFormatting(sheet, firstEmployeeRow, lastEmployeeRow);
-  copyArchiveFormatting(sheet, firstEmployeeRow, lastEmployeeRow, totalRow);
+  applyTabelConditionalFormatting(sheet, groups);
+  copyArchiveFormatting(sheet, firstEmployeeRow, groups, totalRow);
 
-  // Скрываем строку 12 (технический разделитель в "Архив_исходный") и столбец
-  // с технической датой AN — после копирования формата из архива, т.к. оно не
-  // трогает видимость строк/столбцов, но порядок на всякий случай фиксируем явно.
+  // Скрываем строку 12 (технический разделитель в "Архив_исходный") и столбцы с
+  // технической датой AN и техническими таб. номерами AO — после копирования формата
+  // из архива, т.к. оно не трогает видимость строк/столбцов, но порядок на всякий
+  // случай фиксируем явно.
   sheet.hideRows(12, 1);
-  sheet.hideColumns(40, 1);
+  sheet.hideColumns(40, 2); // AN (40) и AO (41)
 
   // Повторный запуск "Пересоздать форму" не должен копить защиты поверх друг друга.
   var existingProtections = sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE);
   for (var p = 0; p < existingProtections.length; p++) {
     existingProtections[p].remove();
   }
-  var dataRange = sheet.getRange(firstEmployeeRow, 4, employeeCount, 31); // D..AH на сотрудников
+  var dataRange = sheet.getRange(firstEmployeeRow, 4, totalRow - firstEmployeeRow, 31); // D..AH на сотрудников и подытоги
   var protection = dataRange.protect().setDescription("Табель — печатная форма, собирается формулами из Журнала");
   protection.setWarningOnly(true);
+}
+
+/**
+ * Строит выражение "SUM(AI35,AI48,...)" из ячеек подытогов всех групп для данного
+ * столбца (дней/часов/переработка) — грандтотал складывает готовые подытоги, а не
+ * диапазон строк целиком (который иначе задвоил бы каждую непустую группу).
+ */
+function sumOfGroupSubtotals(groups, col) {
+  var cells = [];
+  for (var i = 0; i < groups.length; i++) {
+    if (groups[i].subtotalRow !== null) cells.push(col + groups[i].subtotalRow);
+  }
+  if (cells.length === 0) return "0"; // сотрудников нет вовсе — суммировать нечего
+  return "SUM(" + cells.join(",") + ")";
+}
+
+/**
+ * Условие(я) FILTER для столбца «Система оплаты» под конкретную группу —
+ * возвращает массив предикатов (они AND'ятся через запятую внутри FILTER).
+ */
+function paySystemKindConditions(kind) {
+  var normalized = "TRIM(LOWER(" + SHEET_EMPLOYEES + "!$E$2:$E$1000))";
+  if (kind === "оклад") return [normalized + '="оклад"'];
+  if (kind === "сдельная") return [normalized + '="сдельная"'];
+  return [normalized + '<>"оклад"', normalized + '<>"сдельная"']; // без категории: ни то ни другое (включая пусто)
+}
+
+/**
+ * Раскладка строк «Табель» по группам системы оплаты: сперва "оклад", потом
+ * "сдельная", потом сотрудники без назначенной системы оплаты — каждая группа
+ * только если в ней есть хоть один активный сотрудник, со строкой промежуточного
+ * итога сразу после. Общий для buildTabelSheet() и archiveCurrentMonth(), чтобы
+ * раскладка не могла разойтись между пересборкой формы и архивацией месяца.
+ */
+function computeTabelLayout(firstEmployeeRow) {
+  var employees = readEmployees(true);
+  var isOklad = function (e) {
+    return e.paySystem === "оклад";
+  };
+  var isSdelnaya = function (e) {
+    return e.paySystem === "сдельная";
+  };
+  var groupDefs = [
+    { kind: "оклад", label: "Итого (оклад)", count: employees.filter(isOklad).length },
+    { kind: "сдельная", label: "Итого (сдельная)", count: employees.filter(isSdelnaya).length },
+    {
+      kind: "other",
+      label: "Итого (без категории)",
+      count: employees.filter(function (e) {
+        return !isOklad(e) && !isSdelnaya(e);
+      }).length,
+    },
+  ];
+
+  var groups = [];
+  var row = firstEmployeeRow;
+  for (var g = 0; g < groupDefs.length; g++) {
+    if (groupDefs[g].count === 0) continue;
+    var startRow = row;
+    var endRow = row + groupDefs[g].count - 1;
+    row = endRow + 1;
+    var subtotalRow = row;
+    row++;
+    groups.push({ kind: groupDefs[g].kind, label: groupDefs[g].label, startRow: startRow, endRow: endRow, subtotalRow: subtotalRow });
+  }
+
+  if (groups.length === 0) {
+    // нет ни одного активного сотрудника — одна пустая строка без подытога,
+    // чтобы сетка не исчезала совсем.
+    groups.push({ kind: null, label: null, startRow: row, endRow: row, subtotalRow: null });
+    row++;
+  }
+
+  return { groups: groups, employeeCount: employees.length, totalRow: row };
 }
 
 /**
@@ -307,12 +409,12 @@ function buildTabelSheet(sheet) {
  * текущее количество сотрудников; строка ИТОГО и подписи ниже неё копируются
  * со сдвигом на разницу в номере строки ИТОГО между архивом и текущим листом.
  */
-function copyArchiveFormatting(sheet, firstEmployeeRow, lastEmployeeRow, totalRow) {
+function copyArchiveFormatting(sheet, firstEmployeeRow, groups, totalRow) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var archive = ss.getSheetByName(SHEET_ARCHIVE_SOURCE);
   if (!archive) return;
 
-  var lastCol = 39; // A..AM — печатная форма; технический AN (40) не трогаем
+  var lastCol = 39; // A..AM — печатная форма; технические AN/AO (40/41) не трогаем
   var archiveFirstEmployeeRow = 18;
   var archiveTotalRow = 30;
   var archiveLastRow = 37; // захватывает строку ИТОГО и подписи B33/B36 с запасом
@@ -320,21 +422,34 @@ function copyArchiveFormatting(sheet, firstEmployeeRow, lastEmployeeRow, totalRo
   for (var c = 1; c <= lastCol; c++) {
     sheet.setColumnWidth(c, archive.getColumnWidth(c));
   }
-  for (var r = 1; r < archiveFirstEmployeeRow; r++) {
+  for (var r = 1; r < firstEmployeeRow; r++) {
     sheet.setRowHeight(r, archive.getRowHeight(r));
   }
 
   archive
-    .getRange(1, 1, archiveFirstEmployeeRow - 1, lastCol)
-    .copyTo(sheet.getRange(1, 1, archiveFirstEmployeeRow - 1, lastCol), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+    .getRange(1, 1, firstEmployeeRow - 1, lastCol)
+    .copyTo(sheet.getRange(1, 1, firstEmployeeRow - 1, lastCol), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
 
-  var employeeCount = lastEmployeeRow - firstEmployeeRow + 1;
+  // Строка сотрудника из архива — шаблон на каждую группу отдельно (блоки сотрудников
+  // не идут сплошным диапазоном, их разделяют строки подытогов). Подытоговые строки
+  // оформлены как архивная строка ИТОГО (жирный шрифт, границы) — в архиве нет
+  // собственного образца "подытога", но внешне ИТОГО подходит лучше всего.
   var employeeRowHeight = archive.getRowHeight(archiveFirstEmployeeRow);
-  archive
-    .getRange(archiveFirstEmployeeRow, 1, 1, lastCol)
-    .copyTo(sheet.getRange(firstEmployeeRow, 1, employeeCount, lastCol), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
-  for (var er = firstEmployeeRow; er <= lastEmployeeRow; er++) {
-    sheet.setRowHeight(er, employeeRowHeight);
+  var subtotalRowHeight = archive.getRowHeight(archiveTotalRow);
+  var employeeTemplate = archive.getRange(archiveFirstEmployeeRow, 1, 1, lastCol);
+  var subtotalTemplate = archive.getRange(archiveTotalRow, 1, 1, lastCol);
+
+  for (var g = 0; g < groups.length; g++) {
+    var group = groups[g];
+    var count = group.endRow - group.startRow + 1;
+    employeeTemplate.copyTo(sheet.getRange(group.startRow, 1, count, lastCol), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+    for (var er = group.startRow; er <= group.endRow; er++) {
+      sheet.setRowHeight(er, employeeRowHeight);
+    }
+    if (group.subtotalRow !== null) {
+      subtotalTemplate.copyTo(sheet.getRange(group.subtotalRow, 1, 1, lastCol), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+      sheet.setRowHeight(group.subtotalRow, subtotalRowHeight);
+    }
   }
 
   var tailRows = archiveLastRow - archiveTotalRow + 1;
@@ -346,23 +461,27 @@ function copyArchiveFormatting(sheet, firstEmployeeRow, lastEmployeeRow, totalRo
   }
 }
 
-function applyTabelConditionalFormatting(sheet, firstEmployeeRow, lastEmployeeRow) {
-  var range = sheet.getRange("D" + firstEmployeeRow + ":AH" + lastEmployeeRow);
+// groups — блоки сотрудников (без строк подытогов): цвет часов/кодов должен
+// раскрашивать только реальные отметки, а не формулы сумм в подытоговых строках.
+function applyTabelConditionalFormatting(sheet, groups) {
+  var ranges = groups.map(function (g) {
+    return sheet.getRange("D" + g.startRow + ":AH" + g.endRow);
+  });
   var rules = [
     SpreadsheetApp.newConditionalFormatRule()
       .whenFormulaSatisfied('=AND(ISNUMBER(D18),D18>0,D18<=7.5)')
       .setBackground("#BF4F14")
-      .setRanges([range])
+      .setRanges(ranges)
       .build(),
     SpreadsheetApp.newConditionalFormatRule()
       .whenFormulaSatisfied('=AND(ISNUMBER(D18),D18>7.5,D18<=8)')
       .setBackground("#AFD2D3")
-      .setRanges([range])
+      .setRanges(ranges)
       .build(),
     SpreadsheetApp.newConditionalFormatRule()
       .whenFormulaSatisfied('=AND(ISNUMBER(D18),D18>=8.5,D18<=24)')
       .setBackground("#4D94D8")
-      .setRanges([range])
+      .setRanges(ranges)
       .build(),
   ];
   for (var i = 0; i < CODE_TABLE.length; i++) {
@@ -372,7 +491,7 @@ function applyTabelConditionalFormatting(sheet, firstEmployeeRow, lastEmployeeRo
       SpreadsheetApp.newConditionalFormatRule()
         .whenFormulaSatisfied('=D18="' + code + '"')
         .setBackground(color)
-        .setRanges([range])
+        .setRanges(ranges)
         .build()
     );
   }
@@ -411,8 +530,8 @@ function archiveCurrentMonth() {
   copy.setName(name);
   var values = copy.getDataRange().getValues();
   copy.getDataRange().setValues(values); // заменяем формулы статическими значениями
-  var employeeCount = Math.max(readEmployees(true).length, 1);
-  var protection = copy.getRange(18, 4, employeeCount, 31).protect();
+  var layout = computeTabelLayout(18); // та же раскладка, что и при пересборке формы
+  var protection = copy.getRange(18, 4, layout.totalRow - 18, 31).protect();
   protection.setWarningOnly(true);
   copy.hideSheet(); // архив месяца не должен мешаться в списке вкладок
 
