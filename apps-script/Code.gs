@@ -232,16 +232,23 @@ function buildTabelSheet(sheet) {
   // A18 — спиллящийся список активных табельных номеров, отсортированный: сперва
   // "оклад", потом "сдельная" (столбец E «Система оплаты»; алфавитный порядок кириллицы
   // уже даёт нужную последовательность — "о" раньше "с"), внутри каждой группы — по
-  // возрастанию таб. №, чтобы порядок был предсказуемым. Пустая «Система оплаты» (не
+  // фамилии (столбец B «ФИО» начинается с фамилии). Пустая «Система оплаты» (не
   // назначена) — SORT уводит такие строки в конец независимо от направления сортировки.
+  // Условие активности — TRIM(LOWER(...))="да", а не точное "=да": без этого лишний
+  // пробел или другой регистр в столбце D ("Активен") тихо исключал сотрудника из
+  // ЭТОЙ формулы, хотя readEmployees() в API уже делает trim/lowercase и видел бы его —
+  // несовпадение ровно так теряло новых сотрудников при «Пересоздать форму» (живой
+  // пример: "Активен" = " да" с пробелом у 30-го сотрудника).
   // B/C и ячейки дней ниже смотрят на свой же $A<row> по значению, а не по позиции —
   // поэтому сортировка (и добавление нового сотрудника в любое место списка) не путает
   // часы уже существующих сотрудников: каждая строка находит свой журнал по таб. №,
   // где бы она ни оказалась после сортировки.
-  var activeTabNums = SHEET_EMPLOYEES + '!$A$2:$A$1000,' + SHEET_EMPLOYEES + '!$D$2:$D$1000="да"';
-  var activePaySystem = SHEET_EMPLOYEES + '!$E$2:$E$1000,' + SHEET_EMPLOYEES + '!$D$2:$D$1000="да"';
+  var activeCond = 'TRIM(LOWER(' + SHEET_EMPLOYEES + '!$D$2:$D$1000))="да"';
+  var tabNumFilter = 'FILTER(' + SHEET_EMPLOYEES + '!$A$2:$A$1000,' + activeCond + ')';
+  var paySystemFilter = 'FILTER(TRIM(LOWER(' + SHEET_EMPLOYEES + '!$E$2:$E$1000)),' + activeCond + ')';
+  var nameFilter = 'FILTER(TRIM(' + SHEET_EMPLOYEES + '!$B$2:$B$1000),' + activeCond + ')';
   sheet.getRange("A" + firstEmployeeRow).setFormula(
-    '=IFERROR(SORT(FILTER(' + activeTabNums + '),FILTER(' + activePaySystem + '),TRUE,FILTER(' + activeTabNums + '),TRUE),"")'
+    '=IFERROR(SORT(' + tabNumFilter + ',' + paySystemFilter + ',TRUE,' + nameFilter + ',TRUE),"")'
   );
   for (var row = firstEmployeeRow; row <= lastEmployeeRow; row++) {
     sheet.getRange("B" + row).setFormula('=IFERROR(VLOOKUP(A' + row + ',' + SHEET_EMPLOYEES + '!$A:$C,2,FALSE),"")');
