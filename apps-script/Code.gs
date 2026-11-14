@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Табель — backend на Google Apps Script, привязанный к таблице.
  * Публикуется как веб-приложение (Выполнять от имени: я; Доступ: все).
  * Сам скрипт таблицу не публикует и ничего в неё не пишет при деплое — см. README.md.
@@ -8,6 +8,8 @@ var SHEET_EMPLOYEES = "Сотрудники";
 var SHEET_CODES = "Коды";
 var SHEET_JOURNAL = "Журнал";
 var SHEET_TABEL = "Табель";
+var SHEET_HARMFUL = "Вредники";
+var SHEET_ORDERS = "Наряды";
 var SHEET_OLD = "Октябрь(Объем)";
 var SHEET_ARCHIVE_SOURCE = "Архив_исходный";
 
@@ -26,6 +28,34 @@ var CODE_TABLE = [
 ];
 
 var NORM_HOURS = 8;
+var MILK_LITERS_PER_DAY = 0.3; // литров молока за каждый отработанный день (как в исходных «Вредники»)
+var ORDERS_MIN_ROWS = 50; // строк в «Нарядах» по умолчанию; если в данных больше — таблица растёт
+var ORDERS_CAP = 400; // максимум строк с формулами в «Нарядах»
+var ORDERS_SOURCE_ID = "1qlp65ur6bxked5niY2O0Zn1Awh7vHmdBSmIv20G93TE"; // файл с данными нарядов (листы January..December)
+var SCHEDULE_5 = "5-дневная";
+var SCHEDULE_6 = "6-дневная";
+var SHIFT_HOURS = 8; // длина рабочего дня по графику
+var SHEET_PARAMS = "Параметры";
+var PARAMS_HOLIDAYS = "E2:E61"; // праздничные дни (даты) — исключаются из нормы дней месяца
+// Параметры в листе «Параметры»: строка = индекс + 2, значение в столбце B. Порядок не менять
+// без пересборки: формулы ссылаются на конкретные ячейки.
+var PARAM_DEFS = [
+  { key: "org", label: "Организация", value: 'ТОО "ПК Алтын Таға"', note: "Шапка «Табеля», «Нарядов», «Вредников»" },
+  { key: "unit", label: "Структурное подразделение", value: "Цех металлообработки", note: "Шапка «Табеля», «Нарядов», «Вредников»" },
+  { key: "title", label: "Заголовок табеля", value: "ТАБЕЛЬ УЧЕТА РАБОЧЕГО ВРЕМЕНИ И РАСЧЕТА ЗАРАБОТНОЙ ПЛАТЫ", note: "Печатная форма «Табеля»" },
+  { key: "headPos", label: "Должность руководителя («Утверждаю»)", value: "Директор", note: "Далее добавляется название организации" },
+  { key: "headName", label: "ФИО руководителя", value: "Нұрмағамбет Ә. Е.", note: "Подпись «Утверждаю»" },
+  { key: "chief1Pos", label: "Подписант 1 — должность", value: "Нач. цеха", note: "Под таблицей «Табеля» и «Нарядов»" },
+  { key: "chief1Name", label: "Подписант 1 — ФИО", value: "Утебалиев А.В.", note: "" },
+  { key: "chief2Pos", label: "Подписант 2 — должность", value: "Гл. инженер", note: "" },
+  { key: "chief2Name", label: "Подписант 2 — ФИО", value: "Минбаев К.К.", note: "" },
+  { key: "shift", label: "Длина смены, ч", value: SHIFT_HOURS, note: "Для расчёта оклада: оклад ÷ (рабочие дни × смена) × часы" },
+  { key: "overtimeFrom", label: "Переработка начинается после, ч/день", value: NORM_HOURS, note: "Столбец «переработка» в «Табеле»" },
+  { key: "overtimeK", label: "Коэффициент оплаты переработки", value: 1, note: "1 = как обычные часы, 1,5 = полуторная. Только для окладников" },
+  { key: "milk", label: "Молоко, литров за отработанный день", value: MILK_LITERS_PER_DAY, note: "Лист «Вредники»" },
+];
+var TOTAL_FILL = "#FFFF99"; // заливка строк «ИТОГО» на всех листах
+var DEFAULT_FONT = "Arial"; // шрифт по умолчанию во всех листах
 
 // ===================== меню =====================
 
@@ -34,7 +64,15 @@ function onOpen() {
     .createMenu("Табель")
     .addItem("Сохранить месяц в архив", "archiveCurrentMonth")
     .addItem("Пересоздать форму", "rebuildTabelSheet")
+    .addItem("Обновить «Вредники»", "rebuildHarmfulSheet")
+    .addItem("Пересоздать наряды", "rebuildOrdersSheet")
+    .addItem("Обновить рамку нарядов", "refreshOrdersLayout")
     .addToUi();
+  try {
+    refreshOrdersLayout(); // подогнать рамку «Нарядов» под текущее число строк данных
+  } catch (err) {
+    Logger.log("refreshOrdersLayout: " + err);
+  }
 }
 
 // ===================== setupSheets: разовая миграция =====================
@@ -44,10 +82,12 @@ function setupSheets() {
   var log = [];
 
   renameOldSheetToArchive(ss, log);
+  ensureParamsSheet(ss, log);
   var employeesCreated = ensureEmployeesSheet(ss, log);
   ensureCodesSheet(ss, log);
   ensureJournalSheet(ss, log);
   ensureTabelSheet(ss, log, employeesCreated);
+  ensureHarmfulSheet(ss, log);
 
   Logger.log(log.join("\n"));
   return log.join("\n");
@@ -75,7 +115,7 @@ function ensureEmployeesSheet(ss, log) {
     return false;
   }
   var sheet = ss.insertSheet(SHEET_EMPLOYEES);
-  sheet.getRange(1, 1, 1, 5).setValues([["Таб. №", "ФИО", "Должность", "Активен", "Система оплаты"]]);
+  sheet.getRange(1, 1, 1, 8).setValues([["Таб. №", "ФИО", "Должность", "Активен", "Система оплаты", "Оклад", "Вредность", "График"]]);
   sheet.setFrozenRows(1);
 
   var source = ss.getSheetByName(SHEET_ARCHIVE_SOURCE);
@@ -86,11 +126,11 @@ function ensureEmployeesSheet(ss, log) {
       var name = data[i][1];
       var position = data[i][2];
       if (!name) continue;
-      rows.push([i + 1, name, position, "да", ""]); // систему оплаты назначает пользователь вручную
+      rows.push([i + 1, name, position, "да", "", "", "нет", SCHEDULE_5]); // систему оплаты назначает пользователь вручную
     }
   }
   if (rows.length) {
-    sheet.getRange(2, 1, rows.length, 5).setValues(rows);
+    sheet.getRange(2, 1, rows.length, 8).setValues(rows);
   }
   // Выпадающий список в "Система оплаты" — чтобы не разъезжались варианты написания
   // ("Оклад" vs "оклад"), от которых зависит фильтр в приложении.
@@ -99,7 +139,20 @@ function ensureEmployeesSheet(ss, log) {
     .setAllowInvalid(true)
     .build();
   sheet.getRange(2, 5, 999, 1).setDataValidation(paySystemRule);
-  sheet.autoResizeColumns(1, 5);
+  // «Вредность»: "да" — сотрудник попадает в ведомость молока на листе «Вредники».
+  var harmfulRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(["да", "нет"], true)
+    .setAllowInvalid(true)
+    .build();
+  sheet.getRange(2, 7, 999, 1).setDataValidation(harmfulRule);
+  // «График»: 8-часовой день, 5- или 6-дневная неделя — по нему считается норма месяца
+  // и зарплата окладников в «Табеле».
+  var scheduleRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList([SCHEDULE_5, SCHEDULE_6], true)
+    .setAllowInvalid(true)
+    .build();
+  sheet.getRange(2, 8, 999, 1).setDataValidation(scheduleRule);
+  sheet.autoResizeColumns(1, 8);
   log.push('Лист "' + SHEET_EMPLOYEES + '" создан, заполнено сотрудников: ' + rows.length + ".");
   return true;
 }
@@ -137,26 +190,156 @@ function ensureJournalSheet(ss, log) {
 }
 
 function ensureTabelSheet(ss, log, employeesJustCreated) {
-  var existing = ss.getSheetByName(SHEET_TABEL);
-  if (existing) {
+  // «Табель» и «Наряды» ссылаются друг на друга (месяц / итог нарядов), поэтому оба листа
+  // сначала создаются пустыми, и только потом собираются.
+  var tabelExisting = ss.getSheetByName(SHEET_TABEL);
+  var ordersExisting = ss.getSheetByName(SHEET_ORDERS);
+  var tabel = tabelExisting || ss.insertSheet(SHEET_TABEL);
+  var orders = ordersExisting || ss.insertSheet(SHEET_ORDERS);
+
+  if (tabelExisting) {
     log.push('Лист "' + SHEET_TABEL + '" уже существует — пропуск (используйте "Пересоздать форму" для обновления формул).');
-    return;
+  } else {
+    buildTabelSheet(tabel);
+    log.push('Лист "' + SHEET_TABEL + '" создан.');
   }
-  var sheet = ss.insertSheet(SHEET_TABEL);
-  buildTabelSheet(sheet);
-  log.push('Лист "' + SHEET_TABEL + '" создан.');
+  if (ordersExisting) {
+    log.push('Лист "' + SHEET_ORDERS + '" уже существует — пропуск (используйте "Пересоздать форму").');
+  } else {
+    buildOrdersSheet(orders);
+    log.push('Лист "' + SHEET_ORDERS + '" создан.');
+  }
+  moveOrdersNextToTabel(ss);
+}
+
+// «Наряды» стоят сразу справа от «Табеля».
+function moveOrdersNextToTabel(ss) {
+  var tabel = ss.getSheetByName(SHEET_TABEL);
+  var orders = ss.getSheetByName(SHEET_ORDERS);
+  if (!tabel || !orders) return;
+  ss.setActiveSheet(orders);
+  ss.moveActiveSheet(tabel.getIndex() + 1);
+  ss.setActiveSheet(tabel);
+}
+
+// Шрифт по умолчанию на всём листе (форматирование из архивных листов тянет свой шрифт).
+function applyDefaultFont(sheet) {
+  sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).setFontFamily(DEFAULT_FONT);
+}
+
+// ===================== лист «Параметры» =====================
+
+// Ссылка на ячейку значения параметра (для формул).
+function paramCell(key) {
+  for (var i = 0; i < PARAM_DEFS.length; i++) {
+    if (PARAM_DEFS[i].key === key) return SHEET_PARAMS + "!$B$" + (i + 2);
+  }
+  throw new Error("Неизвестный параметр: " + key);
+}
+
+// Числовой параметр для формулы; если ячейка пуста или не число — значение по умолчанию.
+function paramNum(key) {
+  var cell = paramCell(key);
+  var def = PARAM_DEFS.filter(function (d) { return d.key === key; })[0].value;
+  return "IF(ISNUMBER(" + cell + ")," + cell + "," + def + ")";
+}
+
+// Формула «текст параметра» с необязательным префиксом/суффиксом (строковые литералы).
+function paramText(key, prefix, suffix) {
+  var q = function (s) { return '"' + String(s).replace(/"/g, '""') + '"'; };
+  return (prefix ? q(prefix) + "&" : "") + paramCell(key) + (suffix ? "&" + q(suffix) : "");
+}
+
+// Лист создаётся один раз; существующие значения не перезаписываются.
+function ensureParamsSheet(ss, log) {
+  ss = ss || SpreadsheetApp.getActiveSpreadsheet();
+  var existing = ss.getSheetByName(SHEET_PARAMS);
+  if (existing) {
+    if (log) log.push('Лист "' + SHEET_PARAMS + '" уже существует — пропуск.');
+    return existing;
+  }
+  var sheet = ss.insertSheet(SHEET_PARAMS);
+  sheet.getRange(1, 1, 1, 3).setValues([["Параметр", "Значение", "Примечание"]]).setFontWeight("bold");
+  sheet.getRange(1, 5).setValue("Праздничные дни (даты)").setFontWeight("bold");
+  var rows = PARAM_DEFS.map(function (d) { return [d.label, d.value, d.note]; });
+  sheet.getRange(2, 1, rows.length, 3).setValues(rows);
+  sheet.getRange(2, 2, rows.length, 1).setBackground("#FFFFCC").setHorizontalAlignment("left");
+  sheet.getRange(PARAMS_HOLIDAYS).setNumberFormat("dd.mm.yyyy").setBackground("#FFFFCC");
+  sheet.getRange("G1").setValue("Жёлтые ячейки можно менять — формулы подхватят значения сразу. Даты праздников вписывайте в столбец E: они вычитаются из нормы дней месяца (оклад).")
+    .setFontColor("#888888");
+  sheet.setFrozenRows(1);
+  sheet.setColumnWidth(1, 300);
+  sheet.setColumnWidth(2, 420);
+  sheet.setColumnWidth(3, 380);
+  sheet.setColumnWidth(4, 20);
+  sheet.setColumnWidth(5, 150);
+  applyDefaultFont(sheet);
+  if (log) log.push('Лист "' + SHEET_PARAMS + '" создан.');
+  return sheet;
+}
+
+// Ширина столбца под самое длинное значение (в одну строку, без переноса): ~8 px на символ + поля.
+// Существующая ширина (например, из архивной формы) не уменьшается.
+function fitColumnWidth(sheet, col, texts) {
+  var max = 0;
+  texts.forEach(function (t) { max = Math.max(max, String(t == null ? "" : t).trim().length); });
+  var width = Math.max(sheet.getColumnWidth(col), Math.round(max * 8) + 20);
+  sheet.setColumnWidth(col, width);
+}
+
+// Строка «ИТОГО»: жирным и светлая яркая заливка.
+function styleTotalRow(range) {
+  range.setFontWeight("bold").setBackground(TOTAL_FILL);
+}
+
+function resetSheet(sheet) {
+  sheet.clear();
+  sheet.clearConditionalFormatRules();
 }
 
 function rebuildTabelSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(SHEET_TABEL);
-  if (!sheet) {
-    sheet = ss.insertSheet(SHEET_TABEL);
-  } else {
-    sheet.clear();
+  ensureParamsSheet(ss);
+  var tabel = ss.getSheetByName(SHEET_TABEL) || ss.insertSheet(SHEET_TABEL);
+  var orders = ss.getSheetByName(SHEET_ORDERS) || ss.insertSheet(SHEET_ORDERS);
+  resetSheet(tabel);
+  resetSheet(orders);
+  buildOrdersSheet(orders);
+  buildTabelSheet(tabel);
+  moveOrdersNextToTabel(ss);
+  ss.toast("Листы «Табель» и «Наряды» пересобраны.");
+}
+
+function rebuildOrdersSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  ensureParamsSheet(ss);
+  var orders = ss.getSheetByName(SHEET_ORDERS) || ss.insertSheet(SHEET_ORDERS);
+  resetSheet(orders);
+  buildOrdersSheet(orders);
+  moveOrdersNextToTabel(ss);
+  ss.toast("Лист «Наряды» пересобран.");
+}
+
+/**
+ * setFormula принимает формулы в английской нотации (запятые), но таблица с региональными
+ * настройками, где разделитель аргументов другой (например «Казахстан»: ";"), отвергает их
+ * с «Formula parse error» во всех ячейках. Пробуем простую формулу в служебной ячейке и,
+ * если она не считается, останавливаемся с понятным сообщением вместо «сломанной» формы.
+ */
+function assertFormulasSupported(sheet) {
+  var probe = sheet.getRange("A1");
+  probe.setFormula("=IF(TRUE,1,2)");
+  SpreadsheetApp.flush();
+  var ok = probe.getValue() === 1;
+  probe.clear();
+  if (!ok) {
+    var locale = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetLocale();
+    throw new Error(
+      "Формулы не разбираются при региональных настройках таблицы (" + locale + "). " +
+      "Откройте Файл → Настройки → Региональные настройки, выберите «Россия» (или «США»), " +
+      "сохраните и запустите снова."
+    );
   }
-  buildTabelSheet(sheet);
-  SpreadsheetApp.getActiveSpreadsheet().toast("Лист «Табель» пересобран.");
 }
 
 /**
@@ -166,11 +349,12 @@ function rebuildTabelSheet() {
  * таблицы они всё равно показываются по-русски, если у таблицы русская локаль.
  */
 function buildTabelSheet(sheet) {
-  sheet.getRange("A3").setValue('ТОО "ПК Алтын Таға"');
+  assertFormulasSupported(sheet);
+  sheet.getRange("A3").setFormula("=" + paramText("org"));
   sheet.getRange("A4").setValue("(наименование организации)");
-  sheet.getRange("A5").setValue("Цех металообработки");
+  sheet.getRange("A5").setFormula("=" + paramText("unit"));
   sheet.getRange("A6").setValue("(структурное подразделение)");
-  sheet.getRange("P10").setValue("ТАБЕЛЬ УЧЕТА РАБОЧЕГО ВРЕМЕНИ И РАСЧЕТА ЗАРАБОТНОЙ ПЛАТЫ");
+  sheet.getRange("P10").setFormula("=" + paramText("title"));
 
   // AN11 — первое число месяца; источник правды для всей сетки. Прячем его, т.к. это
   // технический параметр, а не часть печатной формы.
@@ -185,19 +369,24 @@ function buildTabelSheet(sheet) {
   var tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
   var ym = Utilities.formatDate(now, tz, "yyyy-MM");
   var first = new Date(ym + "-01T12:00:00Z");
-  if (sheet.getMaxColumns() < 41) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), 41 - sheet.getMaxColumns());
+  if (sheet.getMaxColumns() < 43) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), 43 - sheet.getMaxColumns());
   }
   sheet.getRange("AN11").setValue(first).setNumberFormat("dd.mm.yyyy");
   sheet.hideColumns(40, 1); // AN = столбец 40
+
+  // Норма рабочих дней месяца по графику (без учёта праздников): AP — 5-дневка (сб, вс
+  // выходные), AQ — 6-дневка (выходной только вс). Нужны для зарплаты окладников в AM.
+  sheet.getRange("AP11").setFormula('=NETWORKDAYS.INTL($AN$11,EOMONTH($AN$11,0),"0000011",' + SHEET_PARAMS + '!$' + PARAMS_HOLIDAYS.replace(":", ":$") + ')');
+  sheet.getRange("AQ11").setFormula('=NETWORKDAYS.INTL($AN$11,EOMONTH($AN$11,0),"0000001",' + SHEET_PARAMS + '!$' + PARAMS_HOLIDAYS.replace(":", ":$") + ')');
 
   sheet.getRange("O11").setFormula(
     '="За "&SWITCH(MONTH($AN$11),1,"январь",2,"февраль",3,"март",4,"апрель",5,"май",6,"июнь",7,"июль",8,"август",9,"сентябрь",10,"октябрь",11,"ноябрь",12,"декабрь")&" "&YEAR($AN$11)&" года"'
   );
 
   sheet.getRange("AI3").setValue("Утверждаю");
-  sheet.getRange("AI4").setValue('Директор ТОО "ПК Алтын Таға"');
-  sheet.getRange("AI5").setValue("______________Нұрмағамбет Ә. Е.");
+  sheet.getRange("AI4").setFormula("=" + paramCell("headPos") + '&" "&' + paramCell("org"));
+  sheet.getRange("AI5").setFormula("=" + paramText("headName", "______________"));
 
   // Шапка итогов — три вложенные строки, как в "Архив_исходный":
   // 13: общий заголовок; 14: "дней"/"часов"; 15: "часов"/"из них"; 16: разбивка.
@@ -282,8 +471,14 @@ function buildTabelSheet(sheet) {
       sheet.getRange("AI" + row).setFormula("=COUNT(D" + row + ":AH" + row + ")");
       sheet.getRange("AJ" + row).setFormula("=SUM(D" + row + ":AH" + row + ")");
       sheet.getRange("AL" + row).setFormula(
-        "=SUM(ARRAYFORMULA(IF(ISNUMBER(D" + row + ":AH" + row + "),IF(D" + row + ":AH" + row + ">" + NORM_HOURS + ",D" + row + ":AH" + row + "-" + NORM_HOURS + ",0),0)))"
+        "=SUM(ARRAYFORMULA(IF(ISNUMBER(D" + row + ":AH" + row + "),IF(D" + row + ":AH" + row + ">" + paramNum("overtimeFrom") + ",D" + row + ":AH" + row + "-" + paramNum("overtimeFrom") + ",0),0)))"
       );
+      if (group.kind === "оклад") {
+        sheet.getRange("AM" + row).setFormula(okladSalaryFormula(row));
+      } else if (group.kind === "сдельная") {
+        // часовая ставка сдельщиков — в C<rateRow> (см. ниже), зарплата = ставка × часы
+        sheet.getRange("AM" + row).setFormula('=IF($AO' + row + '="","",IFERROR(ROUND($C$' + (totalRow + 2) + '*AJ' + row + ',0),0))');
+      }
     }
 
     if (group.subtotalRow !== null) {
@@ -295,6 +490,7 @@ function buildTabelSheet(sheet) {
       sheet.getRange("AI" + group.subtotalRow).setFormula("=SUM(AI" + group.startRow + ":AI" + group.endRow + ")");
       sheet.getRange("AJ" + group.subtotalRow).setFormula("=SUM(AJ" + group.startRow + ":AJ" + group.endRow + ")");
       sheet.getRange("AL" + group.subtotalRow).setFormula("=SUM(AL" + group.startRow + ":AL" + group.endRow + ")");
+      sheet.getRange("AM" + group.subtotalRow).setFormula("=SUM(AM" + group.startRow + ":AM" + group.endRow + ")");
     }
   }
 
@@ -305,21 +501,50 @@ function buildTabelSheet(sheet) {
   sheet.getRange("AI" + totalRow).setFormula("=" + sumOfGroupSubtotals(groups, "AI"));
   sheet.getRange("AJ" + totalRow).setFormula("=" + sumOfGroupSubtotals(groups, "AJ"));
   sheet.getRange("AL" + totalRow).setFormula("=" + sumOfGroupSubtotals(groups, "AL"));
+  sheet.getRange("AM" + totalRow).setFormula("=" + sumOfGroupSubtotals(groups, "AM"));
 
-  sheet.getRange("B" + (totalRow + 3)).setValue("Нач. цеха");
-  sheet.getRange("C" + (totalRow + 3)).setValue("Утебалиев А.В.");
-  sheet.getRange("B" + (totalRow + 6)).setValue("Гл. инженер");
-  sheet.getRange("C" + (totalRow + 6)).setValue("Минбаев К.К.");
+  // Сдельщики: общая сумма нарядов делится на общее число их часов — часовая ставка.
+  var sdelnaya = groups.filter(function (g) { return g.kind === "сдельная"; })[0];
+  sheet.getRange("B" + (totalRow + 1)).setValue("Сумма нарядов, тг");
+  sheet.getRange("C" + (totalRow + 1)).setFormula("='" + SHEET_ORDERS + "'!$K$7").setNumberFormat("#,##0");
+  sheet.getRange("B" + (totalRow + 2)).setValue("Часовая ставка сдельщиков, тг/ч");
+  if (sdelnaya) {
+    sheet.getRange("C" + (totalRow + 2)).setFormula("=IFERROR(C" + (totalRow + 1) + "/AJ" + sdelnaya.subtotalRow + ",0)").setNumberFormat("#,##0.00");
+  } else {
+    sheet.getRange("C" + (totalRow + 2)).setValue(0);
+  }
+
+  sheet.getRange("B" + (totalRow + 3)).setFormula("=" + paramCell("chief1Pos"));
+  sheet.getRange("C" + (totalRow + 3)).setFormula("=" + paramCell("chief1Name"));
+  sheet.getRange("B" + (totalRow + 6)).setFormula("=" + paramCell("chief2Pos"));
+  sheet.getRange("C" + (totalRow + 6)).setFormula("=" + paramCell("chief2Name"));
 
   applyTabelConditionalFormatting(sheet, groups);
   copyArchiveFormatting(sheet, firstEmployeeRow, groups, totalRow);
+  // В строке дней — только число дня (1, 2, 3…), а не дата: формат архива при копировании
+  // мог затереть "d", поэтому задаём его снова после copyArchiveFormatting.
+  sheet.getRange("D14:AH14").setNumberFormat("d");
+  sheet.getRange("AM" + firstEmployeeRow + ":AM" + totalRow).setNumberFormat("#,##0");
+  sheet.getRange("C" + (totalRow + 1)).setNumberFormat("#,##0");
+  sheet.getRange("C" + (totalRow + 2)).setNumberFormat("#,##0.00");
+  groups.forEach(function (g) {
+    if (g.subtotalRow !== null) styleTotalRow(sheet.getRange(g.subtotalRow, 1, 1, 39));
+  });
+  styleTotalRow(sheet.getRange(totalRow, 1, 1, 39));
+  applyDefaultFont(sheet);
+
+  // ФИО (B) и должность (C) — в одну строку: без переноса, ширина по самому длинному значению.
+  var tabelEmployees = readEmployees(true);
+  sheet.getRange(firstEmployeeRow, 2, totalRow - firstEmployeeRow, 2).setWrap(false);
+  fitColumnWidth(sheet, 2, tabelEmployees.map(function (e) { return e.name; }));
+  fitColumnWidth(sheet, 3, tabelEmployees.map(function (e) { return e.position; }));
 
   // Скрываем строку 12 (технический разделитель в "Архив_исходный") и столбцы с
   // технической датой AN и техническими таб. номерами AO — после копирования формата
   // из архива, т.к. оно не трогает видимость строк/столбцов, но порядок на всякий
   // случай фиксируем явно.
   sheet.hideRows(12, 1);
-  sheet.hideColumns(40, 2); // AN (40) и AO (41)
+  sheet.hideColumns(40, 4); // AN (40), AO (41), AP (42), AQ (43)
 
   // Повторный запуск "Пересоздать форму" не должен копить защиты поверх друг друга.
   var existingProtections = sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE);
@@ -329,6 +554,25 @@ function buildTabelSheet(sheet) {
   var dataRange = sheet.getRange(firstEmployeeRow, 4, totalRow - firstEmployeeRow, 31); // D..AH на сотрудников и подытоги
   var protection = dataRange.protect().setDescription("Табель — печатная форма, собирается формулами из Журнала");
   protection.setWarningOnly(true);
+}
+
+/**
+ * Зарплата окладника: оклад ÷ (норма дней месяца по графику × смена) × (часы AJ + переработка AL × (коэффициент − 1)).
+ * График (5/6-дневная) и оклад берутся из «Сотрудников» по таб. № из AO. Оклад бывает
+ * записан текстом с пробелами ("400 000") — приводим к числу. Пустой график = 5-дневная.
+ */
+function okladSalaryFormula(row) {
+  var lookup = function (col) {
+    return "VLOOKUP($AO" + row + "," + SHEET_EMPLOYEES + "!$A:$H," + col + ",FALSE)";
+  };
+  return (
+    '=IF($AO' + row + '="","",IFERROR(ROUND(LET(' +
+    "o," + lookup(6) + "," +
+    'sal,IF(ISNUMBER(o),o,VALUE(REGEXREPLACE(o&"","[^0-9]",""))),' +
+    "nd,IF(REGEXMATCH(" + lookup(8) + '&"","6"),$AQ$11,$AP$11),' +
+    "sal/(nd*" + paramNum("shift") + ")*(AJ" + row + "+AL" + row + "*(" + paramNum("overtimeK") + "-1))" +
+    "),0),0))"
+  );
 }
 
 /**
@@ -539,14 +783,267 @@ function archiveCurrentMonth() {
   protection.setWarningOnly(true);
   copy.hideSheet(); // архив месяца не должен мешаться в списке вкладок
 
-  SpreadsheetApp.getUi().alert('Месяц сохранён в скрытый лист "' + name + '". Открыть его можно через "Вид → Скрытые листы".');
+  // «Наряды» архивируются вместе с «Табелем»: тоже значениями и в скрытый лист.
+  var archivedNames = ['"' + name + '"'];
+  var orders = ss.getSheetByName(SHEET_ORDERS);
+  var ordersName = "Наряды_" + monthNames[firstDay.getMonth()] + "_" + firstDay.getFullYear();
+  if (orders && !ss.getSheetByName(ordersName)) {
+    var ordersCopy = orders.copyTo(ss);
+    ordersCopy.setName(ordersName);
+    ordersCopy.getDataRange().setValues(ordersCopy.getDataRange().getValues());
+    ordersCopy.clearConditionalFormatRules();
+    ordersCopy.hideSheet();
+    archivedNames.push('"' + ordersName + '"');
+  }
+
+  SpreadsheetApp.getUi().alert('Месяц сохранён в скрытые листы ' + archivedNames.join(", ") + '. Открыть их можно через "Вид → Скрытые листы".');
+}
+
+// ===================== «Наряды» и «Вредники» =====================
+
+/**
+ * Лист «Наряды» — «Объем выполненных работ». Строки (название из столбца B, вес из D)
+ * подтягиваются IMPORTRANGE из файла данных ORDERS_SOURCE_ID, лист — по английскому
+ * названию месяца «Табеля» (G5, можно переписать вручную). Цена за кг (G) вводится вручную,
+ * «всего» (H) = вес × цена × кол-во. Таблица — минимум ORDERS_MIN_ROWS строк; если в данных
+ * строк больше, она растёт, а ИТОГО и подписанты сдвигаются вниз формулами (положение
+ * считается в K5). Служебные ячейки — в J:O. Общая сумма — K7 (её берёт «Табель»).
+ */
+function buildOrdersSheet(sheet) {
+  assertFormulasSupported(sheet);
+  var T = "'" + SHEET_TABEL + "'!";
+  var money = '_-* #,##0_-;\\-* #,##0_-;_-* "-"??_-;_-@';
+  var first = 9;
+  var last = first + ORDERS_CAP - 1;
+
+  sheet.getRange("F2").setFormula("=" + paramCell("headPos") + '&" "&' + paramCell("org"));
+  sheet.getRange("F4").setFormula("=" + paramText("headName", "_______________"));
+  sheet.getRange("F2:H4").setFontWeight("bold").setHorizontalAlignment("right");
+  sheet.getRange("B4").setFormula("=" + paramText("unit"));
+  sheet.getRange("B5").setValue("Дата:");
+  sheet.getRange("C5").setValue(new Date()).setNumberFormat("dd.mm.yyyy").setHorizontalAlignment("left");
+  sheet.getRange("F5").setValue("Лист данных:").setHorizontalAlignment("right");
+  sheet.getRange("G5").setFormula(
+    '=CHOOSE(MONTH(' + T + '$AN$11),"January","February","March","April","May","June","July","August","September","October","November","December")'
+  ).setHorizontalAlignment("center");
+  sheet.getRange("C6").setValue("Объем выполненных работ").setFontWeight("bold");
+  sheet.getRange("B7").setFormula(
+    '=IF(ISERROR($K$9),"Нет данных: проверьте название листа в G5 и разрешите доступ к файлу (выделите K9 → «Разрешить доступ»)",IF($K$3>' + ORDERS_CAP + ',"Строк в данных больше ' + ORDERS_CAP + ' — лишние не показаны",""))'
+  ).setFontColor("#C00000");
+
+  sheet.getRange("B8:H8")
+    .setValues([["№", "Наименование конструкции и изделий", "ед.изм.", "кол-во", "вес, кг", "цена за кг, тенге", "всего, тенге"]])
+    .setFontWeight("bold")
+    .setHorizontalAlignment("center");
+
+  // Служебные ячейки.
+  sheet.getRange("J1:J7").setValues([["ID файла данных"], ["Лист данных"], ["Строк в данных"], ["Строк в таблице"], ["Строка ИТОГО"], ["Общий вес, кг"], ["Общая сумма, тг"]]);
+  sheet.getRange("K1").setValue(ORDERS_SOURCE_ID);
+  sheet.getRange("K2").setFormula("=$G$5");
+  sheet.getRange("K3").setFormula("=IF(ISERROR($K$9),0,COUNTA($K$9:$K))");
+  sheet.getRange("K4").setFormula("=MAX(" + ORDERS_MIN_ROWS + ",$K$3)");
+  sheet.getRange("K5").setFormula("=" + first + "+$K$4");
+  sheet.getRange("K6").setFormula("=IF(ISERROR($K$9),0,SUM(ARRAYFORMULA(IFERROR(VALUE($M$9:$M),0))))");
+  sheet.getRange("K7").setFormula("=SUM($O$" + first + ":$O$" + last + ")").setNumberFormat("#,##0");
+  sheet.getRange("K8:M8").setValues([["Название", "Заказчик", "Вес"]]);
+  sheet.getRange("O8").setValue("Сумма");
+  sheet.getRange("K9").setFormula(
+    '=LET(d,IMPORTRANGE($K$1,$K$2&"!B2:D"),FILTER(d,INDEX(d,,1)<>""))'
+  );
+
+  var main = [];
+  var hCol = [];
+  var oCol = [];
+  for (var r = first; r <= last; r++) {
+    var idx = "ROW()-8";
+    var isData = idx + "<=$K$3";
+    main.push([
+      '=IF(' + idx + '<=$K$4,' + idx + ',"")',
+      '=IF(' + isData + ',INDEX($K$9:$K,' + idx + '),IF(ROW()=$K$5,"ИТОГО:",IF(ROW()=$K$5+3,' + paramCell("chief1Pos") + ',IF(ROW()=$K$5+6,' + paramCell("chief2Pos") + ',""))))',
+      '=IF(' + isData + ',"шт",IF(ROW()=$K$5+3,' + paramCell("chief1Name") + ',IF(ROW()=$K$5+6,' + paramCell("chief2Name") + ',"")))',
+      '=IF(' + isData + ',1,"")',
+      '=IF(' + isData + ',IFERROR(VALUE(INDEX($M$9:$M,' + idx + ')),0),IF(ROW()=$K$5,$K$6,""))',
+    ]);
+    hCol.push(['=IF(' + isData + ',$O' + r + ',IF(ROW()=$K$5,$K$7,""))']);
+    oCol.push(['=IF(' + isData + ',N($F' + r + ')*N($G' + r + ')*N($E' + r + '),0)']);
+  }
+  sheet.getRange(first, 2, ORDERS_CAP, 5).setFormulas(main);
+  sheet.getRange(first, 8, ORDERS_CAP, 1).setFormulas(hCol);
+  sheet.getRange(first, 15, ORDERS_CAP, 1).setFormulas(oCol);
+
+  var body = ORDERS_CAP;
+  sheet.getRange(first, 2, body, 1).setHorizontalAlignment("center");
+  sheet.getRange(first, 4, body, 2).setHorizontalAlignment("center");
+  sheet.getRange(first, 6, body, 1).setNumberFormat("#,##0").setHorizontalAlignment("right");
+  sheet.getRange(first, 7, body, 1).setNumberFormat("#,##0.00").setHorizontalAlignment("center");
+  sheet.getRange(first, 8, body, 1).setNumberFormat(money).setHorizontalAlignment("center");
+  sheet.getRange(first, 15, body, 1).setNumberFormat("#,##0");
+  sheet.getRange("J1:O" + last).setFontColor("#888888");
+
+  // Строка ИТОГО «ездит» вместе с данными — выделяем её условным форматированием.
+  sheet.setConditionalFormatRules([
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied("=ROW()=$K$5")
+      .setBold(true)
+      .setBackground(TOTAL_FILL)
+      .setRanges([sheet.getRange("B" + first + ":H" + last)])
+      .build(),
+  ]);
+
+  sheet.setColumnWidth(1, 20);
+  sheet.setColumnWidth(2, 40);
+  sheet.setColumnWidth(3, 380);
+  sheet.setColumnWidth(4, 120);
+  sheet.setColumnWidth(5, 70);
+  sheet.setColumnWidth(6, 100);
+  sheet.setColumnWidth(7, 130);
+  sheet.setColumnWidth(8, 130);
+  sheet.setColumnWidth(9, 30);
+  sheet.setColumnWidths(10, 6, 110);
+  sheet.setFrozenRows(8);
+  applyDefaultFont(sheet);
+  SpreadsheetApp.flush();
+  refreshOrdersLayout(sheet);
+}
+
+/**
+ * Рамка «Нарядов» ровно по текущему числу строк (минимум 50 + строка ИТОГО): добавленные
+ * строки выглядят так же, как верхние, а пустые ниже таблицы без рамки. Условным
+ * форматированием границы не рисуются, поэтому обновляется скриптом — при пересборке,
+ * при открытии таблицы и из меню «Обновить наряды».
+ */
+function refreshOrdersLayout(sheet) {
+  sheet = sheet || SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_ORDERS);
+  if (!sheet) return;
+  var n = Number(sheet.getRange("K4").getValue());
+  if (!(n >= ORDERS_MIN_ROWS)) n = ORDERS_MIN_ROWS;
+  n = Math.min(n, ORDERS_CAP);
+  var first = 9;
+  sheet.getRange(first, 2, ORDERS_CAP, 7).setBorder(false, false, false, false, false, false);
+  sheet.getRange(8, 2, n + 2, 7).setBorder(true, true, true, true, true, true); // шапка + n строк + ИТОГО
+}
+
+function ensureHarmfulSheet(ss, log) {
+  ensureParamsSheet(ss);
+  if (ss.getSheetByName(SHEET_HARMFUL)) {
+    log.push('Лист "' + SHEET_HARMFUL + '" уже существует — пропуск (используйте "Обновить «Вредники»").');
+    return;
+  }
+  var sheet = ss.insertSheet(SHEET_HARMFUL);
+  buildHarmfulSheet(sheet);
+  log.push('Лист "' + SHEET_HARMFUL + '" создан.');
+}
+
+function rebuildHarmfulSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  ensureParamsSheet(ss);
+  var sheet = ss.getSheetByName(SHEET_HARMFUL);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_HARMFUL);
+  } else {
+    sheet.clear();
+  }
+  buildHarmfulSheet(sheet);
+  ss.toast("Лист «Вредники» пересобран.");
+}
+
+/**
+ * Ведомость выдачи молока. В список попадают активные сотрудники с «Вредность» = "да"
+ * (лист «Сотрудники», столбец G), по фамилии. «Отработано дней» — сколько числовых
+ * значений часов в «Табеле» у сотрудника за период с C9 по E9 (число месяца), «литров» =
+ * дни × «Молоко» из листа «Параметры» — та же математика, что в исходном файле. Число строк
+ * берётся по сотрудникам на момент сборки: добавили вредника — «Обновить «Вредники»».
+ */
+function buildHarmfulSheet(sheet) {
+  assertFormulasSupported(sheet);
+  var harmful = readEmployees(true).filter(function (e) { return e.harmful; });
+  var count = Math.max(harmful.length, 1);
+  var T = "'" + SHEET_TABEL + "'!";
+  var E = SHEET_EMPLOYEES + "!";
+  var cond = 'TRIM(LOWER(' + E + '$D$2:$D$1000))="да",TRIM(LOWER(' + E + '$G$2:$G$1000))="да"';
+  var sortedNames = 'SORT(FILTER(TRIM(' + E + '$B$2:$B$1000),' + cond + '))';
+
+  // Раскладка и оформление — как в «Вредники» исходного файла: шапка в столбце A с
+  // объединениями, жёлтые ячейки месяца/периода, светло-жёлтая шапка таблицы, рамки.
+  var widths = [24, 206, 174, 97, 62, 62, 79, 89];
+  for (var c = 0; c < widths.length; c++) sheet.setColumnWidth(c + 1, widths[c]);
+
+  sheet.getRange("A2:F2").merge().setHorizontalAlignment("center")
+    .setValue("ВЕДОМОСТЬ\nвыдачи молока (или равноценных пищевых продуктов)");
+  sheet.getRange("A4:C4").merge().setHorizontalAlignment("left").setVerticalAlignment("middle")
+    .setFormula("=" + paramText("org", "Наименование организации: "));
+  sheet.getRange("A6:C6").merge().setHorizontalAlignment("left").setVerticalAlignment("middle")
+    .setFormula("=" + paramText("unit", "Подразделение: "));
+  sheet.getRange("A8").setValue("Месяц");
+  sheet.getRange("C8").setFormula(
+    '=SWITCH(MONTH(' + T + '$AN$11),1,"январь",2,"февраль",3,"март",4,"апрель",5,"май",6,"июнь",7,"июль",8,"август",9,"сентябрь",10,"октябрь",11,"ноябрь",12,"декабрь")'
+  );
+  sheet.getRange("A9").setValue("Период с (число месяца):");
+  sheet.getRange("C9").setValue(1);
+  sheet.getRange("D9").setValue("по (число месяца):").setHorizontalAlignment("right").setFontWeight("bold");
+  sheet.getRange("E9").setFormula("=DAY(EOMONTH(" + T + "$AN$11,0))");
+  sheet.getRange("C8:C9").setBackground("#FFFF99").setFontWeight("bold").setHorizontalAlignment("center");
+  sheet.getRange("E9").setBackground("#FFFF99").setFontWeight("bold").setHorizontalAlignment("center");
+  sheet.getRange("A9").setFontWeight("bold");
+  sheet.getRange("A10:F11").merge().setWrap(true)
+    .setValue("Основание: Перечень профессий и должностей, имеющих право на получение молока за работу во вредных условиях труда.");
+
+  var head = sheet.getRange("A13:H13");
+  head.setValues([["№", "Фамилия имя отчество", "Должность", "Отработано за период (дней)", "Дата выдачи", "Кол-во (литров)", "Подпись работника", "Подпись выдавшего"]]);
+  head.setWrap(true);
+  var nums = sheet.getRange("A14:H14");
+  nums.setValues([[1, 2, 3, 4, 4, 5, 5, 6]]);
+  sheet.getRange("A13:H14").setBackground("#FFFFCC").setFontWeight("bold")
+    .setHorizontalAlignment("center").setVerticalAlignment("middle");
+  sheet.getRange("A13:H14").setBorder(true, true, true, true, true, true);
+  sheet.setRowHeight(13, 48);
+  sheet.setRowHeight(14, 21);
+
+  var first = 15;
+  var last = first + count - 1;
+  var dayRow = T + "$D$14:$AH$14";
+  for (var r = first; r <= last; r++) {
+    sheet.getRange("A" + r).setFormula('=IF(B' + r + '="","",' + (r - first + 1) + ")");
+    sheet.getRange("B" + r).setFormula('=IFERROR(INDEX(' + sortedNames + ',' + (r - first + 1) + '),"")');
+    sheet.getRange("C" + r).setFormula('=IFERROR(INDEX(FILTER(' + E + '$C$2:$C$1000,ARRAYFORMULA(TRIM(' + E + '$B$2:$B$1000))=B' + r + '),1),"")');
+    // Табель: в строке 14 — даты, поэтому границы периода переводим в даты месяца.
+    sheet.getRange("D" + r).setFormula(
+      '=IF(B' + r + '="","",IFERROR(SUMPRODUCT(ISNUMBER(INDEX(' + T + '$D$18:$AH$200,MATCH(B' + r + ',' + T + '$B$18:$B$200,0),0))' +
+      '*(' + dayRow + '>=DATE(YEAR(' + T + '$AN$11),MONTH(' + T + '$AN$11),$C$9))' +
+      '*(' + dayRow + '<=DATE(YEAR(' + T + '$AN$11),MONTH(' + T + '$AN$11),$E$9))),0))'
+    );
+    sheet.getRange("F" + r).setFormula('=IF(B' + r + '="","",D' + r + "*" + paramNum("milk") + ")");
+    sheet.setRowHeight(r, 20);
+  }
+  var totalRow = last + 1;
+  var body = sheet.getRange("A" + first + ":H" + totalRow);
+  body.setBorder(true, true, true, true, true, true).setVerticalAlignment("middle");
+  sheet.getRange("A" + first + ":A" + last).setHorizontalAlignment("center");
+  sheet.getRange("B" + first + ":C" + totalRow).setHorizontalAlignment("left").setWrap(false);
+  fitColumnWidth(sheet, 2, harmful.map(function (e) { return e.name; }));
+  fitColumnWidth(sheet, 3, harmful.map(function (e) { return e.position; }));
+  sheet.getRange("D" + first + ":H" + totalRow).setHorizontalAlignment("center").setFontWeight("bold");
+  sheet.getRange("F" + first + ":F" + totalRow).setNumberFormat("0.0");
+
+  sheet.getRange("B" + totalRow).setValue("ИТОГО:");
+  sheet.getRange("D" + totalRow).setFormula("=SUM(D" + first + ":D" + last + ")");
+  sheet.getRange("F" + totalRow).setFormula("=SUM(F" + first + ":F" + last + ")");
+  sheet.setRowHeight(totalRow, 20);
+  styleTotalRow(sheet.getRange("A" + totalRow + ":H" + totalRow));
+
+  sheet.getRange("B" + (totalRow + 2)).setFormula('="Итого выдано: "&ROUND(F' + totalRow + ',1)&" литров"');
+  sheet.getRange("B" + (totalRow + 4)).setValue("Выдал:");
+  sheet.getRange("B" + (totalRow + 6)).setValue("Проверил:");
+  sheet.getRange("B" + (totalRow + 8)).setValue("Дата");
+
+  applyDefaultFont(sheet);
 }
 
 // ===================== чтение справочников =====================
 
 function readEmployees(onlyActive) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_EMPLOYEES);
-  var rows = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 0), 5).getValues();
+  var rows = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 0), 8).getValues();
   var result = [];
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
@@ -556,7 +1053,7 @@ function readEmployees(onlyActive) {
     // Систему оплаты назначает пользователь сам в таблице; пусто — пока не назначена
     // (в приложении такой сотрудник просто не попадает ни под один конкретный фильтр).
     var paySystem = r[4] ? String(r[4]).trim().toLowerCase() : "";
-    result.push({ tabNum: r[0], name: r[1], position: r[2], active: active, paySystem: paySystem });
+    result.push({ tabNum: r[0], name: r[1], position: r[2], active: active, paySystem: paySystem, salary: r[5] === "" ? null : r[5], harmful: String(r[6]).trim().toLowerCase() === "да", workDays: String(r[7]).indexOf("6") >= 0 ? 6 : 5 });
   }
   return result;
 }
